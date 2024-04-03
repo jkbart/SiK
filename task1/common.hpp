@@ -18,60 +18,199 @@
 #include <utility>
 #include <string>
 #include <memory>
+#include <cerrno>
+#include <cstring>
 
 #include "protconst.h"
 
-namespace NET {
+namespace ASIO {
     constexpr int MAX_UDP_PACKET_SIZE = 65'535;
     constexpr int MAX_DATA_SIZE = 64'000;
 
+    // enum domain_t : int {
+    //     TCP,
+    //     UDP
+    // };
+
+    enum sockopt_t : int {
+        DEBUG = SO_DEBUG,
+        BROADCAST = SO_BROADCAST,
+        REUSEADDR = SO_REUSEADDR,
+        KEEPALIVE = SO_KEEPALIVE,
+        LINGER = SO_LINGER,
+        OOBINLINE = SO_OOBINLINE,
+        SNDBUF = SO_SNDBUF,
+        RCVBUF = SO_RCVBUF,
+        DONTROUTE = SO_DONTROUTE,
+        RCVLOWAT = SO_RCVLOWAT,
+        RCVTIMEO = SO_RCVTIMEO,
+        SNDLOWAT = SO_SNDLOWAT,
+        SNDTIMEO = SO_SNDTIMEO
+    };
 
     class Socket {
-    private:
-        int _socket_fd = -1;
-
     public:
-        Socket(int domain, int type, int protocol) {
-            _socket_fd = socket(domain, type, protocol);
-            if (_socket_fd == -1) {
-                throw std::runtime_error("Couldn't create socket");
-            }
-        }
+        enum connection_t : int {
+            TCP = SOCK_STREAM,
+            UDP = SOCK_DGRAM
+        };
 
-        // Socket(const Socket& other) = delete;
-        // Socket& operator=(const Socket& other) = delete;
+        enum sockopt_t : int {
+            DEBUG = SO_DEBUG,
+            BROADCAST = SO_BROADCAST,
+            REUSEADDR = SO_REUSEADDR,
+            KEEPALIVE = SO_KEEPALIVE,
+            LINGER = SO_LINGER,
+            OOBINLINE = SO_OOBINLINE,
+            SNDBUF = SO_SNDBUF,
+            RCVBUF = SO_RCVBUF,
+            DONTROUTE = SO_DONTROUTE,
+            RCVLOWAT = SO_RCVLOWAT,
+            RCVTIMEO = SO_RCVTIMEO,
+            SNDLOWAT = SO_SNDLOWAT,
+            SNDTIMEO = SO_SNDTIMEO
+        };
 
-        // Socket(Socket&& other) noexcept // move constructor
-        // : _socket_fd(std::move(other._socket_fd)) { 
-        //     other._socket_fd = -1; 
-        // }
-
-        // Socket& operator=(Socket&& other) noexcept { // move assignment
-        //     std::swap(_socket_fd, other._socket_fd);
-        // }
-
-        int get_fd() {
-            return _socket_fd;
-        }
-
-        ~Socket() {
-            if (_socket_fd == -1)
+    private:
+        std::shared_ptr<int> _socket_fd{new int(-1), [](int* x) {
+            if (*x == -1)
                 return;
 
             /* Stop both reception and transmission. */
-            shutdown(_socket_fd, 2);
-            close(_socket_fd);
+            shutdown(*x, 2);
+            close(*x);
+            delete x;
+        }};
+        connection_t _type;
+
+    public:
+        // Variable order diffrent than in socket function!!
+        Socket(connection_t type, int domain = AF_INET, int protocol = 0) : _type{type} {
+            *_socket_fd = socket(domain, type, protocol);
+            if (*_socket_fd == -1) {
+                throw std::runtime_error(std::string("Couldn't create socket: ") + std::strerror(errno));
+            }
+        }
+
+        int get_fd() const {
+            return *_socket_fd;
+        }
+        connection_t get_type() const {
+            return _type;
+        }
+
+        void setsockopt(sockopt_t opt, const void *option_value, size_t opt_len) {
+            int ret = ::setsockopt(*_socket_fd, SOL_SOCKET, opt, option_value, opt_len);
+            if (ret == -1) {
+                throw std::runtime_error(std::string("Couldn't set socket option: ") + std::strerror(errno));
+            }
+        }
+
+        operator int() const {
+            return *_socket_fd;
+        }
+    };
+
+    template<Socket::connection_t C>
+    class Reader;
+
+    // Add timeout.
+    template<>
+    class Reader<Socket::TCP> {
+    private:
+        int _fd;
+        socklen_t _address_length; 
+    public:
+        Reader(Socket &socket) : _fd{socket}, _address_length{(socklen_t) sizeof(sockaddr)} {}
+
+        void readn(sockaddr *addr, void *buff, size_t n) {
+            int ret = recvfrom(_fd, buff, n, MSG_WAITALL, addr, &_address_length);
+            
+            if (ret != n) {
+                throw std::runtime_error(std::string("Failed to read packet: ") + std::strerror(errno));
+            }
+        }
+
+        std::vector<int8_t> readn(sockaddr *addr, size_t n) {
+            std::vector<int8_t> buff(n);
+            int ret = recvfrom(_fd, buff.data(), n, MSG_WAITALL, addr, &_address_length);
+
+            if (ret != n) {
+                throw std::runtime_error(std::string("Failed to read packet: ") + std::strerror(errno));
+            }
+
+            return buff;
+        }
+
+        // Make ready for new packet.
+        void reset() {
+            // Reset timeout.
+        }
+    };
+
+    template<>
+    class Reader<Socket::UDP> {
+    private:
+        int _fd;
+        socklen_t _address_length;
+        std::vector<int8_t> _buff;
+        sockaddr _addr;
+        int _bytes_readed;
+        bool _readed;
+
+        void init() {
+            int ret = recvfrom(_fd, _buff.data(), MAX_UDP_PACKET_SIZE, MSG_WAITALL, &_addr, &_address_length);
+            if (ret != -1) {
+                _buff.resize(ret);
+                _readed = true;
+            } else {
+                throw std::runtime_error(std::string("Failed to read packet: ") + std::strerror(errno));
+            }
+        }
+
+    public:
+        Reader(Socket &socket) : _fd{socket}, _address_length{(socklen_t) sizeof(sockaddr)}, _buff(MAX_UDP_PACKET_SIZE), _bytes_readed{0}, _readed{false} {}
+
+        void readn(sockaddr *addr, void *buff, size_t n) {
+            if (!_readed) {
+                init();
+            }
+
+            if (n < _buff.size() - _bytes_readed) {
+                std::memcpy(buff, _buff.data() + _bytes_readed, n);
+                _bytes_readed += n;
+            } else {
+                throw std::runtime_error(std::string("Readed packet smaller than expected"));
+            }
+        }
+
+        std::vector<int8_t> readn(sockaddr *addr, size_t n) {
+            if (!_readed) {
+                init();
+            }
+
+            if (n < _buff.size() - _bytes_readed) {
+                _bytes_readed += n;
+                return std::vector<int8_t>(_buff.begin() + _bytes_readed - n, _buff.begin() + _bytes_readed);
+            } else {
+                throw std::runtime_error(std::string("Readed packet smaller than expected"));
+            }
+        }
+
+        // Make ready for new packet.
+        void reset() {
+            // Reset bufor.
         }
     };
 
     enum packet_type_t : int8_t {
-        CONN,
-        CONNACC,
-        CONRJT,
-        DATA,
-        ACC,
-        RJT,
-        RCVD
+        CONN = 1,
+        CONNACC = 2,
+        CONRJT = 3,
+        DATA = 4,
+        ACC = 5,
+        RJT = 6,
+        RCVD = 7
     };
 
     std::string packet_to_string(packet_type_t packet_type) {
@@ -100,53 +239,14 @@ namespace NET {
         std::vector<char> data;
     };
 
-    class Server {
-    private:
-        Socket _socket;
-    public:
-        Server(Socket socket) : _socket(socket) {}
-        virtual void setup(const sockaddr &address) = 0;
-        virtual void new_connection() = 0;
-        virtual packet_t recv_messege() = 0;
-        virtual void send_messege(const sockaddr &address) = 0;
-        virtual void anserw_back() = 0;
-        virtual void close() = 0;
+    class Packet {
+        packet_type_t packet_id;
+        virtual void send(Socket &socket, sockaddr *receiver) = 0;
+        virtual void read(Socket &socket, sockaddr *sender) = 0;
     };
 
-    class Client {
-    private:
-        Socket _socket;
-    public:
-        Client(Socket socket) : _socket(socket) {}
-        virtual void connect(const sockaddr &address) = 0;
-        virtual void send_messege(std::vector<packet_t> messege) = 0;
-        virtual packet_t recv_messege() = 0;
-        virtual void close() = 0;
-    };
+    class Packet_Conn : Packet {
 
-    packet_t UDP_read_packet(int sock_fd, const sockaddr &addr) {
-        static std::vector<char> data(MAX_DATA_SIZE);
-        ssize_t readed_len = recv(sock_fd, &data[0], data.size(), 0, &addr, (socklen_t) sizeof(addrlen));
-        
-        if (readed_len <= 0)
-            throw std::runtime_error("Failed to read data from socket");
-        return std::vector<char>(data.begin(), data.begin() + readed_len);
-    }
-
-    class UDP_server : Server {
-    private:
-        Socket _socket;
-    public:
-        void setup(const sockaddr &address) {
-            if (bind(_socket.get_fd(), &address, sizeof(sockaddr)) != 0) {
-                throw std::runtime_error("Couldn't bind socket(" + 
-                    std::to_string(_socket.get_fd()) + ")");
-            }
-        }
-
-        void new_connection() {
-
-        }
     };
 }
 
