@@ -20,6 +20,7 @@
 #include <memory>
 #include <cerrno>
 #include <cstring>
+#include <chrono>
 
 #include "protconst.h"
 
@@ -106,34 +107,82 @@ namespace ASIO {
             }
         }
 
+        void setRecvTimeout(int millis) {
+            timeval timeout;
+            timeout.tv_sec = millis / 1000;
+            timeout.tv_usec = (millis % 10000) * 1000;
+            setsockopt(RCVTIMEO, &timeout, sizeof(timeval));
+        }
+
+        void resetRecvTimeout() {
+            timeval timeout;
+            timeout.tv_sec = 0;
+            timeout.tv_usec = 0;
+            setsockopt(RCVTIMEO, &timeout, sizeof(timeval));
+        }
+
         operator int() const {
             return *_socket_fd;
         }
     };
 
+    /* Classes used to read individual packets with timout set to MAX_WAIT */
+
     template<Socket::connection_t C>
-    class Reader;
+    class PacketReader;
 
     // Add timeout.
     template<>
-    class Reader<Socket::TCP> {
+    class PacketReader<Socket::TCP> {
     private:
-        int _fd;
-        socklen_t _address_length; 
+        Socket _socket;
+        socklen_t _address_length;
+        int time_left;
     public:
-        Reader(Socket &socket) : _fd{socket}, _address_length{(socklen_t) sizeof(sockaddr)} {}
+        PacketReader(Socket &socket) : _socket{socket}, _address_length{(socklen_t) sizeof(sockaddr)}, time_left(MAX_WAIT * 1000) {}
 
         void readn(sockaddr *addr, void *buff, size_t n) {
-            int ret = recvfrom(_fd, buff, n, MSG_WAITALL, addr, &_address_length);
-            
+            if (time_left <= 0) {
+                throw std::runtime_error(std::string("Reading packet timed out."));
+            }
+
+            _socket.setRecvTimeout(time_left);
+            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+
+            int ret = recvfrom(_socket, buff, n, MSG_WAITALL, addr, &_address_length);
+
+            int duration_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count();
+            time_left -= duration_time;
+            _socket.resetRecvTimeout();
+
+            // if (time_left <= 0) {
+            //     throw std::runtime_error(std::string("Reading packet timed out."));
+            // }
+
             if (ret != n) {
                 throw std::runtime_error(std::string("Failed to read packet: ") + std::strerror(errno));
             }
         }
 
         std::vector<int8_t> readn(sockaddr *addr, size_t n) {
+            if (time_left <= 0) {
+                throw std::runtime_error(std::string("Reading packet timed out."));
+            }
+
             std::vector<int8_t> buff(n);
-            int ret = recvfrom(_fd, buff.data(), n, MSG_WAITALL, addr, &_address_length);
+
+            _socket.setRecvTimeout(time_left);
+            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+
+            int ret = recvfrom(_socket, buff.data(), n, MSG_WAITALL, addr, &_address_length);
+
+            int duration_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count();
+            time_left -= duration_time;
+            _socket.resetRecvTimeout();
+
+            // if (time_left <= 0) {
+            //     throw std::runtime_error(std::string("Reading packet timed out."));
+            // }
 
             if (ret != n) {
                 throw std::runtime_error(std::string("Failed to read packet: ") + std::strerror(errno));
@@ -142,16 +191,20 @@ namespace ASIO {
             return buff;
         }
 
-        // Make ready for new packet.
-        void reset() {
-            // Reset timeout.
+        // Convinient way to read variables.
+        template<class... Args>
+        std::tuple<Args...> readGeneric(sockaddr *addr){
+            int len = (sizeof(Args) + ... + 0);
+            auto buffor = readn(addr, len);
+            len = 0;
+            return {*((Args*)(buffor.data() + (len += sizeof(Args)) - sizeof(Args)))...};
         }
     };
 
     template<>
-    class Reader<Socket::UDP> {
+    class PacketReader<Socket::UDP> {
     private:
-        int _fd;
+        Socket _socket;
         socklen_t _address_length;
         std::vector<int8_t> _buff;
         sockaddr _addr;
@@ -159,17 +212,21 @@ namespace ASIO {
         bool _readed;
 
         void init() {
-            int ret = recvfrom(_fd, _buff.data(), MAX_UDP_PACKET_SIZE, MSG_WAITALL, &_addr, &_address_length);
-            if (ret != -1) {
-                _buff.resize(ret);
-                _readed = true;
-            } else {
+            _socket.setRecvTimeout(MAX_WAIT * 1000);
+
+            int ret = recvfrom(_socket, _buff.data(), MAX_UDP_PACKET_SIZE, MSG_WAITALL, &_addr, &_address_length);
+
+            _socket.resetRecvTimeout();
+            if (ret == -1) {
                 throw std::runtime_error(std::string("Failed to read packet: ") + std::strerror(errno));
-            }
+            } 
+
+            _buff.resize(ret);
+            _readed = true;
         }
 
     public:
-        Reader(Socket &socket) : _fd{socket}, _address_length{(socklen_t) sizeof(sockaddr)}, _buff(MAX_UDP_PACKET_SIZE), _bytes_readed{0}, _readed{false} {}
+        PacketReader(Socket &socket) : _socket{socket}, _address_length{(socklen_t) sizeof(sockaddr)}, _buff(MAX_UDP_PACKET_SIZE), _bytes_readed{0}, _readed{false} {}
 
         void readn(sockaddr *addr, void *buff, size_t n) {
             if (!_readed) {
@@ -197,10 +254,20 @@ namespace ASIO {
             }
         }
 
-        // Make ready for new packet.
-        void reset() {
-            // Reset bufor.
+        // Convinient way to read variables.
+        template<class... Args>
+        std::tuple<Args...> readGeneric(sockaddr *addr){
+            int len = (sizeof(Args) + ... + 0);
+            auto buffor = readn(addr, len);
+            len = 0;
+            return {*((Args*)(buffor.data() + (len += sizeof(Args)) - sizeof(Args)))...};
         }
+    };
+
+    enum protocol_t : int8_t {
+        tcp = 1,
+        udp = 2,
+        udpr = 3
     };
 
     enum packet_type_t : int8_t {
@@ -239,15 +306,24 @@ namespace ASIO {
         std::vector<char> data;
     };
 
+    /* every concrete packet should have static method to create packet */
+
     class Packet {
-        packet_type_t packet_id;
+    private:
+        const packet_type_t _packet_id;
+        const int64_t _session_id;
+    protected:
+        Packet(packet_type_t packet_id, int64_t session_id) : _packet_id(packet_id), _session_id(session_id) {}
+    public:
         virtual void send(Socket &socket, sockaddr *receiver) = 0;
-        virtual void read(Socket &socket, sockaddr *sender) = 0;
-    };
-
-    class Packet_Conn : Packet {
 
     };
+
+    // class Packet_CONN : Packet {
+    // private:
+    //     const protocol_t _protocol;
+    //     const 
+    // };
 }
 
 #endif /* COMMON_HPP */
