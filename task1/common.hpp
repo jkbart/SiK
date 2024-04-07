@@ -28,6 +28,9 @@ namespace ASIO {
     constexpr int MAX_UDP_PACKET_SIZE = 65'535;
     constexpr int MAX_DATA_SIZE = 64'000;
 
+
+    static socklen_t address_length = (socklen_t) sizeof(sockaddr);
+
     // enum domain_t : int {
     //     TCP,
     //     UDP
@@ -136,10 +139,9 @@ namespace ASIO {
     class PacketReader<Socket::TCP> {
     private:
         Socket _socket;
-        socklen_t _address_length;
         int time_left;
     public:
-        PacketReader(Socket &socket) : _socket{socket}, _address_length{(socklen_t) sizeof(sockaddr)}, time_left(MAX_WAIT * 1000) {}
+        PacketReader(Socket &socket) : _socket{socket}, time_left(MAX_WAIT * 1000) {}
 
         void readn(sockaddr *addr, void *buff, size_t n) {
             if (time_left <= 0) {
@@ -149,7 +151,7 @@ namespace ASIO {
             _socket.setRecvTimeout(time_left);
             std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
-            int ret = recvfrom(_socket, buff, n, MSG_WAITALL, addr, &_address_length);
+            int ret = recvfrom(_socket, buff, n, MSG_WAITALL, addr, &address_length);
 
             int duration_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count();
             time_left -= duration_time;
@@ -174,7 +176,7 @@ namespace ASIO {
             _socket.setRecvTimeout(time_left);
             std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
-            int ret = recvfrom(_socket, buff.data(), n, MSG_WAITALL, addr, &_address_length);
+            int ret = recvfrom(_socket, buff.data(), n, MSG_WAITALL, addr, &address_length);
 
             int duration_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count();
             time_left -= duration_time;
@@ -196,8 +198,8 @@ namespace ASIO {
         std::tuple<Args...> readGeneric(sockaddr *addr){
             int len = (sizeof(Args) + ... + 0);
             auto buffor = readn(addr, len);
-            len = 0;
-            return {*((Args*)(buffor.data() + (len += sizeof(Args)) - sizeof(Args)))...};
+            int offset = 0;
+            return {*((Args*)(buffor.data() + (offset += sizeof(Args)) - sizeof(Args)))...};
         }
     };
 
@@ -259,10 +261,34 @@ namespace ASIO {
         std::tuple<Args...> readGeneric(sockaddr *addr){
             int len = (sizeof(Args) + ... + 0);
             auto buffor = readn(addr, len);
-            len = 0;
+            int offset = 0;
             return {*((Args*)(buffor.data() + (len += sizeof(Args)) - sizeof(Args)))...};
         }
     };
+
+    void send_n(Socket &socket, void *buffor, int len) {
+        int sent = 0;
+        while (sent != len) {
+            int ret = sendto((int)socket, buffor.data() + sent, len - sent, 0, addr, s);
+            if (ret == 0) {
+                throw std::runtime_error(std::string("Failed to send packet: ") + std::strerror(errno));
+            }
+            sent += ret;
+        }
+
+        ssize_t sent_length = sendto(socket_fd, send_buffer, message_length, send_flags,
+                                     (struct sockaddr *) &server_address, address_length);
+    }
+
+
+    template<class... Args>
+    void send_v(Socket &socket, Args... args){
+        int len = (sizeof(Args) + ... + 0);
+        std::vector<int8_t> buffor(len); 
+        int offset = 0;
+        ((*(Args*)(buffor.data() + (offset += sizeof(Args)) - sizeof(Args)) = args),...);
+        send_n(socket, buffor.data(), len);
+    }
 
     enum protocol_t : int8_t {
         tcp = 1,
@@ -273,7 +299,7 @@ namespace ASIO {
     enum packet_type_t : int8_t {
         CONN = 1,
         CONNACC = 2,
-        CONRJT = 3,
+        CONNRJT = 3,
         DATA = 4,
         ACC = 5,
         RJT = 6,
@@ -286,8 +312,8 @@ namespace ASIO {
             return "CONN";
         case CONNACC:
             return "CONNACC";
-        case CONRJT:
-            return "CONRJT";
+        case CONNRJT:
+            return "CONNRJT";
         case DATA:
             return "DATA";
         case ACC:
@@ -301,29 +327,75 @@ namespace ASIO {
         }
     }
 
-    struct packet_t {
-        sockaddr_in client_address;
-        std::vector<char> data;
-    };
+    // struct packet_t {
+    //     sockaddr_in client_address;
+    //     std::vector<char> data;
+    // };
 
-    /* every concrete packet should have static method to create packet */
 
     class Packet {
     private:
-        const packet_type_t _packet_id;
         const int64_t _session_id;
     protected:
-        Packet(packet_type_t packet_id, int64_t session_id) : _packet_id(packet_id), _session_id(session_id) {}
+        Packet(int64_t session_id) : _session_id(session_id) {}
     public:
         virtual void send(Socket &socket, sockaddr *receiver) = 0;
+        virtual packet_type_t getID() = 0;
 
     };
 
-    // class Packet_CONN : Packet {
-    // private:
-    //     const protocol_t _protocol;
-    //     const 
-    // };
+    class Packet_CONN : Packet {
+    private:
+        static const packet_type_t _id = CONN;
+        const protocol_t _protocol;
+        const int64_t _data_len;
+    public:
+        Packet_CONN(int session_id, protocol_t protocol, int64_t data_len) : Packet(session_id), _protocol(protocol), _data_len(data_len) {}
+        void send(Socket &socket, sockaddr *receiver) {
+
+        }
+
+        static Packet_CONN read(PacketReader &reader, sockaddr *addr) {
+            auto [session_id, protocol, data_len] = 
+                reader.readGeneric<int64_t, protocol_t, int64_t>(addr);
+            return Packet_CONN(session_id, protocol, data_len);
+        }
+    };
+
+    class Packet_CONNACC : Packet {
+    private:
+        static const packet_type_t _id = CONNACC;
+    };
+
+    class Packet_CONNRJT : Packet {
+    private:
+        static const packet_type_t _id = CONNRJT;
+    };
+
+    class Packet_DATA : Packet {
+    private:
+        static const packet_type_t _id = DATA;
+        const int64_t packet_number;
+        const int32_t packet_byte_cnt;
+        const std::vector<int8_t> data;
+    };
+
+    class Packet_ACC : Packet {
+    private:
+        static const packet_type_t _id = ACC;
+        const int64_t packet_number;
+    };
+
+    class Packet_RJT : Packet {
+    private:
+        static const packet_type_t _id = RJT;
+        const int64_t packet_number;
+    };
+
+    class Packet_RCVD : Packet {
+    private:
+        static const packet_type_t _id = RCVD;
+    };
 }
 
 #endif /* COMMON_HPP */
