@@ -120,8 +120,7 @@ namespace IO {
     };
 
     /* Classes used to read individual packets with timout set to MAX_WAIT */
-
-    class PacketReader {
+    class PacketReaderBase {
     public:
         virtual void readn(sockaddr *addr, void *buff, size_t n) = 0;
         std::vector<int8_t> readn(sockaddr *addr, size_t n) {
@@ -139,25 +138,27 @@ namespace IO {
         }
     };
 
-    class PacketReader_TCP : public PacketReader {
+    template<Socket::connection_t C>
+    class PacketReader;
+
+    template<>
+    class PacketReader<Socket::TCP> : public PacketReaderBase {
     private:
         Socket &_socket;
-        int time_left;
+        std::chrono::steady_clock::time_point _timeout_begin;
     public:
-        PacketReader_TCP(Socket &socket) : _socket{socket}, time_left(MAX_WAIT * 1000) {}
+        PacketReader<Socket::TCP>(Socket &socket, std::chrono::steady_clock::time_point timeout_begin=std::chrono::steady_clock::now()) : _socket{socket}, _timeout_begin(timeout_begin) {}
 
         void readn(sockaddr *addr, void *buff, size_t n) {
-            if (time_left <= 0) {
+            int timeout = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - _timeout_begin).count();
+            if (MAX_WAIT * 1000 - timeout <= 0) {
                 throw std::runtime_error(std::string("Reading packet timed out."));
             }
 
-            _socket.setRecvTimeout(time_left);
-            std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+            _socket.setRecvTimeout(MAX_WAIT * 1000 - timeout);
 
             int ret = recvfrom(_socket, buff, n, MSG_WAITALL, addr, &address_length);
 
-            int duration_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count();
-            time_left -= duration_time;
             _socket.resetRecvTimeout();
 
             if (ret != n) {
@@ -166,7 +167,8 @@ namespace IO {
         }
     };
 
-    class PacketReader_UDP : public PacketReader{
+    template<>
+    class PacketReader<Socket::UDP> : public PacketReaderBase{
     private:
         Socket &_socket;
         socklen_t _address_length;
@@ -176,8 +178,13 @@ namespace IO {
         bool _readed;
 
     public:
-        PacketReader_UDP(Socket &socket) : _socket{socket}, _address_length{(socklen_t) sizeof(sockaddr)}, _buff(MAX_UDP_PACKET_SIZE), _bytes_readed{0}, _readed{false} {
-            _socket.setRecvTimeout(MAX_WAIT * 1000);
+        PacketReader<Socket::UDP>(Socket &socket, std::chrono::steady_clock::time_point timeout_begin=std::chrono::steady_clock::now()) : _socket{socket}, _address_length{(socklen_t) sizeof(sockaddr)}, _buff(MAX_UDP_PACKET_SIZE), _bytes_readed{0}, _readed{false} {
+            int timeout = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - timeout_begin).count();
+            if (MAX_WAIT * 1000 - timeout <= 0) {
+                throw std::runtime_error(std::string("Reading packet timed out."));
+            }
+
+            _socket.setRecvTimeout(MAX_WAIT * 1000 - timeout);
 
             int ret = recvfrom(_socket, _buff.data(), MAX_UDP_PACKET_SIZE, MSG_WAITALL, &_addr, &_address_length);
 
@@ -234,20 +241,24 @@ namespace IO {
     public:
         PacketSender(Socket &socket, sockaddr *addr) : _socket(socket), _buffor(0), _addr(addr) {}
 
-        void add_data(void *data, size_t len) {
+        PacketSender& add_data(void *data, size_t len) {
             size_t offset = _buffor.size();
             _buffor.resize(offset + len);
             std::memcpy(_buffor.data() + offset, data, len);
+
+            return *this;
         }
 
         template<class... Args>
-        void add_var(Args... args){
+        PacketSender& add_var(Args... args){
             size_t len = (sizeof(Args) + ... + 0);
             size_t offset_old = _buffor.size();
 
             _buffor.resize(offset_old + len);
             int offset = 0;
             ((*(Args*)(_buffor.data() + offset_old + (offset += sizeof(Args)) - sizeof(Args)) = args),...);
+
+            return *this;
         }
 
         void send() {
