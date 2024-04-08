@@ -106,6 +106,12 @@ namespace ASIO {
                 reader.readGeneric<int64_t, protocol_t, int64_t>(addr);
             return Packet<CONN>(session_id, protocol, data_len);
         }
+
+        static Packet<CONN> read(IO::PacketReaderBase &reader, int64_t session_id, sockaddr *addr) {
+            auto [protocol, data_len] = 
+                reader.readGeneric<protocol_t, int64_t>(addr);
+            return Packet<CONN>(session_id, protocol, data_len);
+        }
     };
 
     template<>
@@ -127,6 +133,10 @@ namespace ASIO {
                 reader.readGeneric<int64_t>(addr);
             return Packet<CONNACC>(session_id);
         }
+
+        static Packet<CONNACC> read(IO::PacketReaderBase &reader, int64_t session_id, sockaddr *addr) {
+            return Packet<CONNACC>(session_id);
+        }
     };
 
     template<>
@@ -146,6 +156,10 @@ namespace ASIO {
         static Packet<CONNRJT> read(IO::PacketReaderBase &reader, sockaddr *addr) {
             auto [session_id] = 
                 reader.readGeneric<int64_t>(addr);
+            return Packet<CONNRJT>(session_id);
+        }
+
+        static Packet<CONNRJT> read(IO::PacketReaderBase &reader, int64_t session_id, sockaddr *addr) {
             return Packet<CONNRJT>(session_id);
         }
     };
@@ -183,6 +197,13 @@ namespace ASIO {
 
             return Packet<DATA>(session_id, packet_number, packet_byte_cnt, reader.readn(addr, packet_byte_cnt));
         }
+
+        static Packet<DATA> read(IO::PacketReaderBase &reader, int64_t session_id, sockaddr *addr) {
+            auto [packet_number, packet_byte_cnt] = 
+                reader.readGeneric<int64_t, int32_t>(addr);
+
+            return Packet<DATA>(session_id, packet_number, packet_byte_cnt, reader.readn(addr, packet_byte_cnt));
+        }
     };
 
     template<>
@@ -202,6 +223,12 @@ namespace ASIO {
         static Packet<ACC> read(IO::PacketReaderBase &reader, sockaddr *addr) {
             auto [session_id, packet_number] = 
                 reader.readGeneric<int64_t, int64_t>(addr);
+            return Packet<ACC>(session_id, packet_number);
+        }
+
+        static Packet<ACC> read(IO::PacketReaderBase &reader, int64_t session_id, sockaddr *addr) {
+            auto [packet_number] = 
+                reader.readGeneric<int64_t>(addr);
             return Packet<ACC>(session_id, packet_number);
         }
     };
@@ -225,6 +252,12 @@ namespace ASIO {
                 reader.readGeneric<int64_t, int64_t>(addr);
             return Packet<RJT>(session_id, packet_number);
         }
+
+        static Packet<RJT> read(IO::PacketReaderBase &reader, int64_t session_id, sockaddr *addr) {
+            auto [packet_number] = 
+                reader.readGeneric<int64_t>(addr);
+            return Packet<RJT>(session_id, packet_number);
+        }
     };
 
     template<>
@@ -246,18 +279,11 @@ namespace ASIO {
                 reader.readGeneric<int64_t>(addr);
             return Packet<RCVD>(session_id);
         }
-    };
-
-    template<IO::Socket::connection_t C>
-    bool autorejector(PacketBase  &packet, sockaddr packet_sender, int64_t session_id, sockaddr client_address);
-
-    template<>
-    bool autorejector<IO::Socket::UDP>(PacketBase  &packet, sockaddr packet_sender, int64_t session_id, sockaddr client_address) {
-        if (packet._session_id != session_id) {
-            if (packet.getID() == CONN)
+        
+        static Packet<RCVD> read(IO::PacketReaderBase &reader, int64_t session_id, sockaddr *addr) {
+            return Packet<RCVD>(session_id);
         }
-    }
-
+    };
 
 }
 

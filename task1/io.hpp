@@ -160,6 +160,10 @@ namespace IO {
             int ret = recvfrom(_socket, buff, n, MSG_WAITALL, addr, &address_length);
 
             _socket.resetRecvTimeout();
+            
+            if (errno == ETIMEDOUT) {
+                throw std::runtime_error(std::string("Reading packet timed out."));
+            }
 
             if (ret != n) {
                 throw std::runtime_error(std::string("Failed to read packet: ") + std::strerror(errno));
@@ -189,6 +193,11 @@ namespace IO {
             int ret = recvfrom(_socket, _buff.data(), MAX_UDP_PACKET_SIZE, MSG_WAITALL, &_addr, &_address_length);
 
             _socket.resetRecvTimeout();
+
+            if (errno == ETIMEDOUT) {
+                throw std::runtime_error(std::string("Reading packet timed out."));
+            }
+
             if (ret == -1) {
                 throw std::runtime_error(std::string("Failed to read packet: ") + std::strerror(errno));
             } 

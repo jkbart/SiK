@@ -7,6 +7,25 @@
 namespace SERVER {
     using namespace ASIO;
 
+    template<IO::Socket::connection_t C>
+    std::tuple<IO::PacketReader<C>&, packet_type_t> get_next_from_session(IO::Socket &socket, sockaddr client_address);
+
+    template<>
+    std::tuple<IO::PacketReader<IO::Socket::UDP>&, packet_type_t> get_next_from_session<IO::Socket::UDP>(IO::Socket &socket, sockaddr client_address) {
+        while (true) {
+            sockaddr addr;
+            IO::PacketReader<IO::Socket::UDP> reader(socket);
+            auto [id, session_id] = 
+                reader.readGeneric<packet_type_t, int64_t>(&addr);
+            
+        }
+    }
+
+    template<>
+    std::tuple<IO::PacketReader<IO::Socket::TCP>&, packet_type_t> get_next_from_session<IO::Socket::TCP>(IO::Socket &socket, sockaddr client_address) {
+        
+    }
+
 
     template<ASIO::protocol_t P>
     void run_server(uint16_t port);
