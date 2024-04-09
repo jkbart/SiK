@@ -24,11 +24,27 @@
 
 #include "protconst.h"
 
+bool operator==(const sockaddr_in& lhs, const sockaddr_in& rhs) {
+    return (lhs.sin_addr.s_addr == rhs.sin_addr.s_addr) && 
+        (lhs.sin_port == rhs.sin_port);
+}
+
 namespace IO {
     constexpr int MAX_UDP_PACKET_SIZE = 65'535;
     constexpr int MAX_DATA_SIZE = 64'000;
 
-    socklen_t address_length = (socklen_t) sizeof(sockaddr);
+    socklen_t address_length = (socklen_t) sizeof(sockaddr_in);
+
+    class timeout_error : public std::exception {
+    private:
+        int _fd;
+        std::string _msg;
+    public:
+        timeout_error(int fd) : _fd(fd), _msg("Socket: " + std::to_string(_fd) + " timed out") {}
+        const char* what() {
+            return _msg.c_str();
+        }
+    };
 
     class Socket {
     public:
@@ -122,17 +138,17 @@ namespace IO {
     /* Classes used to read individual packets with timout set to MAX_WAIT */
     class PacketReaderBase {
     public:
-        virtual void readn(sockaddr *addr, void *buff, size_t n) = 0;
-        std::vector<int8_t> readn(sockaddr *addr, size_t n) {
+        virtual void readn(void *buff, size_t n) = 0;
+        std::vector<int8_t> readn(size_t n) {
             std::vector<int8_t> buffor(n);
-            readn(addr, buffor.data(), n);
+            readn(buffor.data(), n);
             return buffor;
         }
 
         template<class... Args>
-        std::tuple<Args...> readGeneric(sockaddr *addr){
+        std::tuple<Args...> readGeneric(){
             int len = (sizeof(Args) + ... + 0);
-            auto buffor = readn(addr, len);
+            auto buffor = readn(len);
             int offset = 0;
             return {*((Args*)(buffor.data() + (offset += sizeof(Args)) - sizeof(Args)))...};
         }
@@ -146,23 +162,35 @@ namespace IO {
     private:
         Socket &_socket;
         std::chrono::steady_clock::time_point _timeout_begin;
+        bool _needs_timeout;
     public:
-        PacketReader<Socket::TCP>(Socket &socket, std::chrono::steady_clock::time_point timeout_begin=std::chrono::steady_clock::now()) : _socket{socket}, _timeout_begin(timeout_begin) {}
+        PacketReader<Socket::TCP>(
+            Socket &socket, 
+            sockaddr_in *,
+            bool needs_timeout=true, 
+            std::chrono::steady_clock::time_point timeout_begin=std::chrono::steady_clock::now()) : 
+        _socket{socket}, 
+        _timeout_begin(timeout_begin),
+        _needs_timeout{needs_timeout} {}
 
-        void readn(sockaddr *addr, void *buff, size_t n) {
-            int timeout = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - _timeout_begin).count();
-            if (MAX_WAIT * 1000 - timeout <= 0) {
-                throw std::runtime_error(std::string("Reading packet timed out."));
+        void readn(void *buff, size_t n) {
+            if (_needs_timeout) {
+                int timeout = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - _timeout_begin).count();
+                if (MAX_WAIT * 1000 - timeout <= 0) {
+                    throw timeout_error((int)_socket);
+                }
+
+                _socket.setRecvTimeout(MAX_WAIT * 1000 - timeout);
             }
 
-            _socket.setRecvTimeout(MAX_WAIT * 1000 - timeout);
+            int ret = recvfrom(_socket, buff, n, MSG_WAITALL, NULL, &address_length);
 
-            int ret = recvfrom(_socket, buff, n, MSG_WAITALL, addr, &address_length);
-
-            _socket.resetRecvTimeout();
+            if (_needs_timeout) {
+                _socket.resetRecvTimeout();
+            }
             
             if (errno == ETIMEDOUT) {
-                throw std::runtime_error(std::string("Reading packet timed out."));
+                throw timeout_error((int)_socket);
             }
 
             if (ret != n) {
@@ -175,27 +203,34 @@ namespace IO {
     class PacketReader<Socket::UDP> : public PacketReaderBase{
     private:
         Socket &_socket;
-        socklen_t _address_length;
         std::vector<int8_t> _buff;
-        sockaddr _addr;
-        int _bytes_readed;
-        bool _readed;
+        int _bytes_readed{0};
 
     public:
-        PacketReader<Socket::UDP>(Socket &socket, std::chrono::steady_clock::time_point timeout_begin=std::chrono::steady_clock::now()) : _socket{socket}, _address_length{(socklen_t) sizeof(sockaddr)}, _buff(MAX_UDP_PACKET_SIZE), _bytes_readed{0}, _readed{false} {
-            int timeout = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - timeout_begin).count();
-            if (MAX_WAIT * 1000 - timeout <= 0) {
-                throw std::runtime_error(std::string("Reading packet timed out."));
+        PacketReader<Socket::UDP>(
+            Socket &socket, 
+            sockaddr_in *addr,
+            bool needs_timeout=true, 
+            std::chrono::steady_clock::time_point timeout_begin=std::chrono::steady_clock::now()) : 
+        _socket{socket},
+        _buff(MAX_UDP_PACKET_SIZE) {
+            if (needs_timeout) {
+                int timeout = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - timeout_begin).count();
+                if (MAX_WAIT * 1000 - timeout <= 0) {
+                    throw timeout_error((int)_socket);
+                }
+
+                _socket.setRecvTimeout(MAX_WAIT * 1000 - timeout);
             }
 
-            _socket.setRecvTimeout(MAX_WAIT * 1000 - timeout);
+            int ret = recvfrom(_socket, _buff.data(), MAX_UDP_PACKET_SIZE, MSG_WAITALL, (sockaddr*) addr, &address_length);
 
-            int ret = recvfrom(_socket, _buff.data(), MAX_UDP_PACKET_SIZE, MSG_WAITALL, &_addr, &_address_length);
-
-            _socket.resetRecvTimeout();
+            if (needs_timeout) {
+                _socket.resetRecvTimeout();
+            }
 
             if (errno == ETIMEDOUT) {
-                throw std::runtime_error(std::string("Reading packet timed out."));
+                throw timeout_error((int)_socket);
             }
 
             if (ret == -1) {
@@ -203,11 +238,10 @@ namespace IO {
             } 
 
             _buff.resize(ret);
-            _readed = true;
 
         }
 
-        void readn(sockaddr *addr, void *buff, size_t n) {
+        void readn(void *buff, size_t n) {
             if (n < _buff.size() - _bytes_readed) {
                 std::memcpy(buff, _buff.data() + _bytes_readed, n);
                 _bytes_readed += n;
@@ -218,10 +252,10 @@ namespace IO {
     };
 
 
-    void send_n(Socket &socket, sockaddr *addr, int8_t *buffor, int len) {
+    void send_n(Socket &socket, sockaddr_in *addr, int8_t *buffor, int len) {
         int sent = 0;
         while (sent != len) {
-            int ret = sendto((int)socket, buffor + sent, len - sent, 0, addr, address_length);
+            int ret = sendto((int)socket, buffor + sent, len - sent, 0, (sockaddr*) addr, address_length);
             if (ret == 0) {
                 throw std::runtime_error(std::string("Failed to send packet: ") + std::strerror(errno));
             }
@@ -229,11 +263,11 @@ namespace IO {
         }
 
         // ssize_t sent_length = sendto(int socketfd, send_buffer, message_length, send_flags,
-        //                              (struct sockaddr *) &server_address, address_length);
+        //                              (struct sockaddr_in *) &server_address, address_length);
     }
 
     template<class... Args>
-    void send_v(Socket &socket, sockaddr *addr,  Args... args){
+    void send_v(Socket &socket, sockaddr_in *addr,  Args... args){
         int len = (sizeof(Args) + ... + 0);
         std::vector<int8_t> buffor(len); 
         int offset = 0;
@@ -246,9 +280,10 @@ namespace IO {
     private:
         Socket &_socket;
         std::vector<int8_t> _buffor;
-        sockaddr *_addr;
+        sockaddr_in *_addr;
     public:
-        PacketSender(Socket &socket, sockaddr *addr) : _socket(socket), _buffor(0), _addr(addr) {}
+        PacketSender(Socket &socket, sockaddr_in *addr) : 
+        _socket(socket), _buffor(0), _addr(addr) {}
 
         PacketSender& add_data(void *data, size_t len) {
             size_t offset = _buffor.size();
