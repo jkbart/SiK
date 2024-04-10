@@ -22,6 +22,8 @@
 #include <utility>
 #include <vector>
 
+#include <iostream>
+
 #include <cstdlib>
 #include <random>
 
@@ -100,10 +102,10 @@ template <> class Packet<CONN> : public PacketBase {
   public:
     static const packet_type_t _id = CONN;
     const protocol_t _protocol;
-    const int64_t _data_len;
+    const int32_t _data_len;
 
   public:
-    Packet<CONN>(int64_t session_id, protocol_t protocol, int64_t data_len)
+    Packet(int64_t session_id, protocol_t protocol, int32_t data_len)
         : PacketBase(session_id), _protocol(protocol), _data_len(data_len) {}
 
     void send(IO::Socket &socket, sockaddr_in *receiver) {
@@ -114,12 +116,12 @@ template <> class Packet<CONN> : public PacketBase {
 
     static Packet<CONN> read(IO::PacketReaderBase &reader) {
         auto [session_id, protocol, data_len] =
-            reader.readGeneric<int64_t, protocol_t, int64_t>();
+            reader.readGeneric<int64_t, protocol_t, int32_t>();
         return Packet<CONN>(session_id, protocol, data_len);
     }
 
     static Packet<CONN> read(IO::PacketReaderBase &reader, int64_t session_id) {
-        auto [protocol, data_len] = reader.readGeneric<protocol_t, int64_t>();
+        auto [protocol, data_len] = reader.readGeneric<protocol_t, int32_t>();
         return Packet<CONN>(session_id, protocol, data_len);
     }
 };
@@ -129,7 +131,7 @@ template <> class Packet<CONNACC> : public PacketBase {
     static const packet_type_t _id = CONNACC;
 
   public:
-    Packet<CONNACC>(int64_t session_id) : PacketBase(session_id) {}
+    Packet(int64_t session_id) : PacketBase(session_id) {}
 
     void send(IO::Socket &socket, sockaddr_in *receiver) {
         IO::send_v(socket, receiver, _id, _session_id);
@@ -153,7 +155,7 @@ template <> class Packet<CONNRJT> : public PacketBase {
     static const packet_type_t _id = CONNRJT;
 
   public:
-    Packet<CONNRJT>(int64_t session_id) : PacketBase(session_id) {}
+    Packet(int64_t session_id) : PacketBase(session_id) {}
 
     void send(IO::Socket &socket, sockaddr_in *receiver) {
         IO::send_v(socket, receiver, _id, _session_id);
@@ -180,13 +182,13 @@ template <> class Packet<DATA> : public PacketBase {
     const std::vector<int8_t> _data;
 
   public:
-    Packet<DATA>(int64_t session_id, int64_t packet_number,
+    Packet(int64_t session_id, int64_t packet_number,
                  int32_t packet_byte_cnt, void *data)
         : PacketBase(session_id), _packet_number(packet_number),
           _packet_byte_cnt(packet_byte_cnt), _data(packet_byte_cnt) {
         std::memcpy((void *)_data.data(), data, packet_byte_cnt);
     }
-    Packet<DATA>(int64_t session_id, int64_t packet_number,
+    Packet(int64_t session_id, int64_t packet_number,
                  int32_t packet_byte_cnt, std::vector<int8_t> data)
         : PacketBase(session_id), _packet_number(packet_number),
           _packet_byte_cnt(packet_byte_cnt), _data(data) {}
@@ -196,7 +198,7 @@ template <> class Packet<DATA> : public PacketBase {
         // receiver, _id,  _session_id, _protocol, _data_len); send_v(socket,
         // receiver, _id, _session_id);
         IO::PacketSender sender(socket, receiver);
-        sender.add_var(_id, _packet_number, _packet_byte_cnt);
+        sender.add_var(_id, _session_id, _packet_number, _packet_byte_cnt);
         sender.add_data((char *)_data.data(), _data.size());
         sender.send();
     }
@@ -226,7 +228,7 @@ template <> class Packet<ACC> : public PacketBase {
     const int64_t _packet_number;
 
   public:
-    Packet<ACC>(int64_t session_id, int64_t packet_number)
+    Packet(int64_t session_id, int64_t packet_number)
         : PacketBase(session_id), _packet_number(packet_number) {}
 
     void send(IO::Socket &socket, sockaddr_in *receiver) {
@@ -253,7 +255,7 @@ template <> class Packet<RJT> : public PacketBase {
     const int64_t _packet_number;
 
   public:
-    Packet<RJT>(int64_t session_id, int64_t packet_number)
+    Packet(int64_t session_id, int64_t packet_number)
         : PacketBase(session_id), _packet_number(packet_number) {}
 
     void send(IO::Socket &socket, sockaddr_in *receiver) {
@@ -279,7 +281,7 @@ template <> class Packet<RCVD> : public PacketBase {
     static const packet_type_t _id = RCVD;
 
   public:
-    Packet<RCVD>(int64_t session_id) : PacketBase(session_id) {}
+    Packet(int64_t session_id) : PacketBase(session_id) {}
 
     void send(IO::Socket &socket, sockaddr_in *receiver) {
         // send_v<packet_type_t, int64_t, protocol_t, int64_t> (socket,
@@ -300,12 +302,12 @@ template <> class Packet<RCVD> : public PacketBase {
 };
 
 template <IO::Socket::connection_t C>
-std::tuple<IO::PacketReader<C> &, packet_type_t>
+std::tuple<IO::PacketReader<C>, packet_type_t>
 get_next_from_session(IO::Socket &socket, sockaddr_in client_address,
                       int64_t current_session_id);
 
 template <>
-std::tuple<IO::PacketReader<IO::Socket::UDP> &, packet_type_t>
+std::tuple<IO::PacketReader<IO::Socket::UDP>, packet_type_t>
 get_next_from_session<IO::Socket::UDP>(IO::Socket &socket,
                                        sockaddr_in client_address,
                                        int64_t current_session_id) {
@@ -325,13 +327,15 @@ get_next_from_session<IO::Socket::UDP>(IO::Socket &socket,
 }
 
 template <>
-std::tuple<IO::PacketReader<IO::Socket::TCP> &, packet_type_t>
+std::tuple<IO::PacketReader<IO::Socket::TCP>, packet_type_t>
 get_next_from_session<IO::Socket::TCP>(IO::Socket &socket,
                                        sockaddr_in client_address,
                                        int64_t current_session_id) {
 
     IO::PacketReader<IO::Socket::TCP> reader(socket, NULL);
     auto [id, session_id] = reader.readGeneric<packet_type_t, int64_t>();
+
+    std::cout << "readed next: id->" << packet_to_string(id) << " ,session_id->" << session_id << "\n";
 
     if (session_id != current_session_id) {
         throw std::runtime_error(

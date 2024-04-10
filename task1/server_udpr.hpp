@@ -15,7 +15,8 @@ void run_server_udpr(uint16_t port) {
         try {
             sockaddr_in client_address;
 
-            IO::PacketReader<IO::Socket::UDP> reader(socket, &client_address);
+            IO::PacketReader<IO::Socket::UDP> reader(socket, &client_address,
+                                                     false);
             auto [id] = reader.readGeneric<packet_type_t>();
             if (id != ASIO::CONN) {
                 throw unexpected_packet(CONN, id);

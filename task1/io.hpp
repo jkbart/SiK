@@ -21,6 +21,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <iostream>
 
 #include "protconst.h"
 
@@ -77,6 +78,7 @@ class Socket {
     connection_t _type;
 
   public:
+    Socket() = delete;
     // Variable order diffrent than in socket function!!
     Socket(connection_t type, int domain = AF_INET, int protocol = 0) {
         *_socket_fd = socket(domain, type, protocol);
@@ -117,7 +119,8 @@ class Socket {
     void setRecvTimeout(int millis) {
         timeval timeout;
         timeout.tv_sec = millis / 1000;
-        timeout.tv_usec = (millis % 10000) * 1000;
+        timeout.tv_usec = (millis % 1000) * 1000;
+        // std::cout << millis / 1000 << " " << (millis % 10000) * 1000 << "\n";
         setsockopt(RCVTIMEO, &timeout, sizeof(timeval));
     }
 
@@ -131,10 +134,30 @@ class Socket {
     operator int() const { return *_socket_fd; }
 };
 
+template<class Arg>
+void printer(Arg arg) {
+    std::cout << typeid(Arg).name() << ": \"";
+    unsigned char *ptr = (unsigned char *)&arg;
+    for (int i = 0; i < sizeof(Arg); i++) {
+        if (i != 0) std::cout << " ";
+        printf("%x", *ptr);
+        ptr++;
+    }
+    std::cout << "\"\n";
+}
+
+template<class Arg>
+Arg read_single_var(signed char *buffor) {
+    Arg var;
+    std::memcpy(&var, buffor, sizeof(Arg));
+    return var;
+}
+
 /* Classes used to read individual packets with timout set to MAX_WAIT */
 class PacketReaderBase {
   public:
     virtual void readn(void *buff, size_t n) = 0;
+    
     std::vector<int8_t> readn(size_t n) {
         std::vector<int8_t> buffor(n);
         readn(buffor.data(), n);
@@ -144,9 +167,16 @@ class PacketReaderBase {
     template <class... Args> std::tuple<Args...> readGeneric() {
         int len = (sizeof(Args) + ... + 0);
         auto buffor = readn(len);
-        int offset = 0;
-        return {*((Args *)(buffor.data() + (offset += sizeof(Args)) -
-                           sizeof(Args)))...};
+        // int offset = 0;
+        // return {*((Args *)(buffor.data() + (offset += sizeof(Args)) -
+        //                    sizeof(Args)))...};
+        signed char *ptr = buffor.data();
+        ((printer(read_single_var<Args>((ptr += sizeof(Args)) - 
+                                           sizeof(Args))),...));
+        signed char *offset = buffor.data();
+        return {read_single_var<Args>((offset += sizeof(Args)) - 
+                                       sizeof(Args))...};
+
     }
 };
 
@@ -159,7 +189,7 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
     bool _needs_timeout;
 
   public:
-    PacketReader<Socket::TCP>(
+    PacketReader(
         Socket &socket, sockaddr_in *, bool needs_timeout = true,
         std::chrono::steady_clock::time_point timeout_begin =
             std::chrono::steady_clock::now())
@@ -203,7 +233,7 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
     int _bytes_readed{0};
 
   public:
-    PacketReader<Socket::UDP>(
+    PacketReader(
         Socket &socket, sockaddr_in *addr, bool needs_timeout = true,
         std::chrono::steady_clock::time_point timeout_begin =
             std::chrono::steady_clock::now())
@@ -267,9 +297,18 @@ void send_v(Socket &socket, sockaddr_in *addr, Args... args) {
     int len = (sizeof(Args) + ... + 0);
     std::vector<int8_t> buffor(len);
     int offset = 0;
-    ((*(Args *)(buffor.data() + (offset += sizeof(Args)) - sizeof(Args)) =
-          args),
+    ((std::memcpy((buffor.data() + (offset += sizeof(Args)) - sizeof(Args)),
+          &args, sizeof(Args))),
      ...);
+
+    // std::cout << "BUFFOR OT SEND: ";    
+    // for(int i = 0; i < len; i++) {
+    //     std::cout << (unsigned int)buffor[i] << " ";
+    // } std::cout << "\n";
+    signed char *ptr = buffor.data();
+    ((printer(read_single_var<Args>((ptr += sizeof(Args)) - 
+                                       sizeof(Args))),...));
+    std::cout << "\n";
     send_n(socket, addr, buffor.data(), len);
 }
 
@@ -297,8 +336,8 @@ class PacketSender {
 
         _buffor.resize(offset_old + len);
         int offset = 0;
-        ((*(Args *)(_buffor.data() + offset_old + (offset += sizeof(Args)) -
-                    sizeof(Args)) = args),
+        ((std::memcpy(_buffor.data() + offset_old + (offset += sizeof(Args)) -
+                    sizeof(Args), &args, sizeof(Args))),
          ...);
 
         return *this;
@@ -306,6 +345,53 @@ class PacketSender {
 
     void send() { send_n(_socket, _addr, _buffor.data(), _buffor.size()); }
 };
+
+uint16_t read_port(char const *string) {
+    char *endptr;
+    errno = 0;
+    unsigned long port = strtoul(string, &endptr, 10);
+    if (errno != 0 || *endptr != 0 || port > UINT16_MAX) {
+        throw std::runtime_error(std::string(string) + 
+                                 std::string(" is not a port valid number"));
+    }
+    return (uint16_t) port;
+}
+
+size_t read_size(char const *string) {
+    char *endptr;
+    errno = 0;
+    unsigned long long number = strtoull(string, &endptr, 10);
+    if (errno != 0 || *endptr != 0 || number > SIZE_MAX) {
+        throw std::runtime_error(std::string(string) + 
+                                 std::string(" is not a valid number"));
+    }
+    return number;
+}
+
+struct sockaddr_in get_server_address(char const *host, uint16_t port) {
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_INET; // IPv4
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    struct addrinfo *address_result;
+    int errcode = getaddrinfo(host, NULL, &hints, &address_result);
+    if (errcode != 0) {
+        throw std::runtime_error(std::string("getaddrinfo: ") + 
+                                 std::string(gai_strerror(errcode)));
+    }
+
+    struct sockaddr_in send_address;
+    send_address.sin_family = AF_INET;   // IPv4
+    send_address.sin_addr.s_addr =       // IP address
+            ((struct sockaddr_in *) (address_result->ai_addr))->sin_addr.s_addr;
+    send_address.sin_port = htons(port); // port from the command line
+
+    freeaddrinfo(address_result);
+
+    return send_address;
+}
 } // namespace IO
 
 #endif /* IO_HPP */

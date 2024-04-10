@@ -18,6 +18,7 @@ void run_server_tcp(uint16_t port) {
     }
 
     while (true) {
+        std::cout << "wainting for CONN\n";
         try {
             sockaddr_in client_address;
 
