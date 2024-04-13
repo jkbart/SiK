@@ -33,7 +33,8 @@ void run_server_udp(uint16_t port) {
             int64_t session_id = conn._session_id;
             int64_t bytes_left = conn._data_len;
 
-            ASIO::Packet<CONNACC>(session_id).send(socket, &client_address);
+            ASIO::Packet<CONNACC>(session_id)
+                .send(socket, &client_address);
 
             std::vector<ASIO::Packet<DATA>> data;
 
