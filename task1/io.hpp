@@ -23,6 +23,9 @@
 #include <vector>
 #include <iostream>
 
+#include "debug.hpp"
+using namespace DEBUG_NS;
+
 #include "protconst.h"
 
 bool operator==(const sockaddr_in &lhs, const sockaddr_in &rhs) {
@@ -32,7 +35,8 @@ bool operator==(const sockaddr_in &lhs, const sockaddr_in &rhs) {
 
 namespace IO {
 constexpr int MAX_UDP_PACKET_SIZE = 65'535;
-constexpr int MAX_DATA_SIZE = 64'000;
+// constexpr int MAX_DATA_SIZE = 64'000;
+constexpr int MAX_DATA_SIZE = 6;
 
 socklen_t address_length = (socklen_t)sizeof(sockaddr_in);
 
@@ -43,8 +47,8 @@ class timeout_error : public std::exception {
 
   public:
     timeout_error(int fd)
-        : _fd(fd), _msg("Socket: " + std::to_string(_fd) + " timed out") {}
-    const char *what() { return _msg.c_str(); }
+        : _fd(fd), _msg("Socket on descriptor " + std::to_string(_fd) + " timed out") {}
+    const char *what() const throw() { return _msg.c_str(); }
 };
 
 class Socket {
@@ -52,7 +56,7 @@ class Socket {
     enum connection_t : int { TCP = SOCK_STREAM, UDP = SOCK_DGRAM };
 
     enum sockopt_t : int {
-        DEBUG = SO_DEBUG,
+        // DEBUG = SO_DEBUG, // weird errors occur when compiling with -DDEBUG
         BROADCAST = SO_BROADCAST,
         REUSEADDR = SO_REUSEADDR,
         KEEPALIVE = SO_KEEPALIVE,
@@ -78,22 +82,6 @@ class Socket {
     connection_t _type;
 
   public:
-    Socket() = delete;
-    // Variable order diffrent than in socket function!!
-    Socket(connection_t type, int domain = AF_INET, int protocol = 0) {
-        *_socket_fd = socket(domain, type, protocol);
-        if (*_socket_fd == -1) {
-            throw std::runtime_error(std::string("Couldn't create socket: ") +
-                                     std::strerror(errno));
-        }
-    }
-
-    void swap(const Socket &other) {
-        std::swap(_socket_fd, other._socket_fd);
-    }
-
-    Socket(int fd) { *_socket_fd = fd; }
-
     void bind(uint16_t port) {
         struct sockaddr_in server_address;
         server_address.sin_family = AF_INET; // IPv4
@@ -128,30 +116,50 @@ class Socket {
         setsockopt(RCVTIMEO, &timeout, sizeof(timeval));
     }
 
-    void resetRecvTimeout() {
+    void setSendTimeout(int millis) {
         timeval timeout;
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 0;
-        setsockopt(RCVTIMEO, &timeout, sizeof(timeval));
+        timeout.tv_sec = millis / 1000;
+        timeout.tv_usec = (millis % 1000) * 1000;
+        // std::cout << millis / 1000 << " " << (millis % 10000) * 1000 << "\n";
+        setsockopt(SNDTIMEO, &timeout, sizeof(timeval));
+    }
+
+    void resetRecvTimeout() {
+        // timeval timeout;
+        // timeout.tv_sec = 0;
+        // timeout.tv_usec = 0;
+        // setsockopt(RCVTIMEO, &timeout, sizeof(timeval));
+        setRecvTimeout(0);
+    }
+
+    void resetSendTimeout() {
+        // timeval timeout;
+        // timeout.tv_sec = 0;
+        // timeout.tv_usec = 0;
+        // setsockopt(RCVTIMEO, &timeout, sizeof(timeval));
+        setSendTimeout(0);
     }
 
     operator int() const { return *_socket_fd; }
-};
 
-template<class Arg>
-void printer(Arg arg) {
-    std::string type_name = std::string(typeid(Arg).name());
-    std:: cout << type_name << " :";
-    for (size_t i = type_name.size(); i < 20; i++) std::cout << " ";
-    std::cout << "\"";
-    char *ptr = (char *)&arg;
-    for (size_t i = 0; i < sizeof(Arg); i++) {
-        if (i != 0) std::cout << " ";
-        printf("%x", *ptr);
-        ptr++;
+    Socket() = delete;
+    // Variable order diffrent than in socket function!!
+    Socket(connection_t type, int domain = AF_INET, int protocol = 0) {
+        *_socket_fd = socket(domain, type, protocol);
+        if (*_socket_fd < 0) {
+            throw std::runtime_error(std::string("Couldn't create socket: ") +
+                                     std::strerror(errno));
+        }
+        setRecvTimeout(MAX_WAIT * 1000);
+        setSendTimeout(MAX_WAIT * 1000);
     }
-    std::cout << "\"\n";
-}
+
+    Socket(int fd) { 
+        *_socket_fd = fd;
+        setRecvTimeout(MAX_WAIT * 1000);
+        setSendTimeout(MAX_WAIT * 1000);
+    }
+};
 
 template<class Arg>
 Arg read_single_var(char *buffor) {
@@ -160,12 +168,6 @@ Arg read_single_var(char *buffor) {
     return var;
 }
 
-// Doing :
-// return {read_single_var<Args>((offset += sizeof(Args)) - 
-//                                sizeof(Args))...};
-// prints warning. Solution:
-// return {read_single_var<Args>(increment(offset, sizeof(Args)) - 
-//                               sizeof(Args))...};
 template<class Arg1, class Arg2>
 Arg1& increment(Arg1& arg1, Arg2 arg2) {
     arg1 += arg2;
@@ -189,9 +191,9 @@ class PacketReaderBase {
         // int offset = 0;
         // return {*((Args *)(buffor.data() + (offset += sizeof(Args)) -
         //                    sizeof(Args)))...};
-        char *ptr = buffor.data();
-        ((printer(read_single_var<Args>((ptr += sizeof(Args)) - 
-                                           sizeof(Args))),...));
+        // char *ptr = buffor.data();
+        // ((printer(read_single_var<Args>((ptr += sizeof(Args)) - 
+        //                                    sizeof(Args))),...));
         char *offset = buffor.data();
         // return {read_single_var<Args>((offset += sizeof(Args)) - 
         //                                sizeof(Args))...};
@@ -273,11 +275,13 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
         ssize_t ret = recvfrom(_socket, _buff.data(), MAX_UDP_PACKET_SIZE,
                            MSG_WAITALL, (sockaddr *)addr, &address_length);
 
+        // DBG_printer("UDP reader readed: ", std::to_string(ret), " at once");
+
         if (needs_timeout) {
             _socket.resetRecvTimeout();
         }
 
-        if (errno == ETIMEDOUT) {
+        if (errno == ETIMEDOUT || errno == EAGAIN) {
             throw timeout_error((int)_socket);
         }
 
@@ -290,7 +294,7 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
     }
 
     void readn(void *buff, ssize_t n) {
-        if (n < (ssize_t)_buff.size() - _bytes_readed) {
+        if (n <= (ssize_t)_buff.size() - _bytes_readed) {
             std::memcpy(buff, _buff.data() + _bytes_readed, n);
             _bytes_readed += n;
         } else {
@@ -305,6 +309,9 @@ void send_n(Socket &socket, sockaddr_in *addr, char *buffor, ssize_t len) {
     while (sent != len) {
         ssize_t ret = sendto((int)socket, buffor + sent, len - sent, 0,
                          (sockaddr *)addr, address_length);
+
+        // DBG_printer("send_n sended: ", std::to_string(ret));
+
         if (ret == 0) {
             throw std::runtime_error(std::string("Failed to send packet: ") +
                                      std::strerror(errno));
@@ -326,10 +333,10 @@ void send_v(Socket &socket, sockaddr_in *addr, Args... args) {
     // for(int i = 0; i < len; i++) {
     //     std::cout << (unsigned int)buffor[i] << " ";
     // } std::cout << "\n";
-    char *ptr = buffor.data();
-    ((printer(read_single_var<Args>((ptr += sizeof(Args)) - 
-                                       sizeof(Args))),...));
-    std::cout << "\n";
+    // char *ptr = buffor.data();
+    // ((printer(read_single_var<Args>((ptr += sizeof(Args)) - 
+    //                                    sizeof(Args))),...));
+    // std::cout << "\n";
     send_n(socket, addr, buffor.data(), len);
 }
 

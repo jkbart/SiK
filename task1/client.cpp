@@ -1,11 +1,13 @@
 #include "common.hpp"
 #include "io.hpp"
 #include "handlers.hpp"
+#include "debug.hpp"
 
 #include <iostream>
 #include <string>
 
 using namespace ASIO;
+using namespace DEBUG_NS;
 
 std::ifstream::pos_type filesize(const char* filename)
 {
@@ -19,9 +21,9 @@ std::ifstream::pos_type filesize(const char* filename)
 
 
 int main(int argc, char *argv[]) {
+    try {
     if (argc != 5) {
-        std::cerr << "[ERROR] Usage: <protocol> <ip> <port> <file>\n";
-        return 1;
+        throw std::runtime_error("Usage: <protocol> <ip> <port> <file>");
     }
 
     std::string s_protocol(argv[1]);
@@ -32,7 +34,6 @@ int main(int argc, char *argv[]) {
     std::ifstream file(argv[4], std::ios::binary); 
     if (!file.is_open()) {
         throw std::runtime_error("Failed to open the file");
-        return 1;
     }
 
     size_t file_size = filesize(argv[4]);
@@ -40,7 +41,6 @@ int main(int argc, char *argv[]) {
     std::optional<Packet<CONN>> conn;
 
     if (s_protocol == "tcp") {
-
         IO::Socket socket(IO::Socket::TCP);
         std::cout << "Connecting... \n";
 
@@ -69,5 +69,8 @@ int main(int argc, char *argv[]) {
         Session<udpr> session(socket, server_address, session_id);
 
         client_handler(session, session_id, std::move(file), file_size);
+    }
+    } catch (std::exception &e) {
+        std::cerr << "[ERROR] " << e.what() << "\n";
     }
 }

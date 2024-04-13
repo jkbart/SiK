@@ -3,6 +3,7 @@
 
 #include "io.hpp"
 #include "common.hpp"
+#include "debug.hpp"
 // #include "interface.hpp"
 
 #include <optional>
@@ -13,25 +14,28 @@ namespace ASIO {
 using namespace ASIO;
 
 template <IO::Socket::connection_t C>
-std::tuple<IO::PacketReader<C>, packet_type_t>
+std::tuple<std::unique_ptr<IO::PacketReaderBase>, packet_type_t>
 get_next_from_session(IO::Socket &socket, sockaddr_in client_address,
     uint64_t current_session_id, 
     std::chrono::steady_clock::time_point to_begin = 
     std::chrono::steady_clock::now());
 
 template <>
-std::tuple<IO::PacketReader<IO::Socket::UDP>, packet_type_t>
+std::tuple<std::unique_ptr<IO::PacketReaderBase>, packet_type_t>
 get_next_from_session<IO::Socket::UDP>(IO::Socket &socket,
     sockaddr_in client_address, uint64_t current_session_id,
     std::chrono::steady_clock::time_point to_begin) {
 
     while (true) {
         sockaddr_in addr;
-        IO::PacketReader<IO::Socket::UDP> reader(socket, &addr, true, to_begin);
-        auto [id, session_id] = reader.readGeneric<packet_type_t, uint64_t>();
+        auto reader = std::make_unique<IO::PacketReader<IO::Socket::UDP>>
+            (socket, &addr, true, to_begin);
+        auto [id, session_id] = reader->readGeneric<packet_type_t, uint64_t>();
+
+        DBG_printer("readed next: id->", packet_to_string(id), " ,session_id->", session_id);
 
         if (session_id == current_session_id && addr == client_address) {
-            return {reader, id};
+            return {std::move(reader), id};
         } else if (id == CONN) {
             Packet<CONNRJT>(session_id).send(socket, &addr);
         }
@@ -39,15 +43,17 @@ get_next_from_session<IO::Socket::UDP>(IO::Socket &socket,
 }
 
 template <>
-std::tuple<IO::PacketReader<IO::Socket::TCP>, packet_type_t>
-get_next_from_session<IO::Socket::TCP>(IO::Socket &socket, sockaddr_in, 
+std::tuple<std::unique_ptr<IO::PacketReaderBase>, packet_type_t>
+get_next_from_session<IO::Socket::TCP>(IO::Socket &socket, sockaddr_in addr, 
     uint64_t current_session_id, 
     std::chrono::steady_clock::time_point to_begin) {
 
-    IO::PacketReader<IO::Socket::TCP> reader(socket, NULL, true, to_begin);
-    auto [id, session_id] = reader.readGeneric<packet_type_t, uint64_t>();
+    auto reader = std::make_unique<IO::PacketReader<IO::Socket::TCP>>
+        (socket, &addr, true, to_begin);
 
-    std::cout << "readed next: id->" << packet_to_string(id) << " ,session_id->" << session_id << "\n";
+    auto [id, session_id] = reader->readGeneric<packet_type_t, uint64_t>();
+
+    DBG_printer("readed next: id->", packet_to_string(id), " ,session_id->", session_id);
 
     if (session_id != current_session_id) {
         throw std::runtime_error(
@@ -56,7 +62,7 @@ get_next_from_session<IO::Socket::TCP>(IO::Socket &socket, sockaddr_in,
             std::string("received: ") + std::to_string(session_id));
     }
 
-    return {reader, id};
+    return {std::move(reader), id};
 }
 
 template<protocol_t P>
@@ -103,10 +109,11 @@ public:
 
 
     void send(std::unique_ptr<PacketBase> packet) {
+        DBG_printer("sending: id->", packet_to_string(packet->getID()));
         packet->send(_socket, &_addr);
     }
 
-    std::tuple<IO::PacketReader<connection>, packet_type_t> get_next() {
+    std::tuple<std::unique_ptr<IO::PacketReaderBase>, packet_type_t> get_next() {
         return get_next_from_session<connection>(_socket, _addr, _session_id);
     }
 };
@@ -125,12 +132,14 @@ public:
     : SessionBase(socket, addr, session_id) {}
 
     void send(std::unique_ptr<PacketBase> packet) {
+
+        DBG_printer("sending: id->", packet_to_string(packet->getID()));
         packet->send(_socket, &_addr);
         _retransmit_cnt = MAX_RETRANSMITS;
         _last_msg = std::move(packet);
     }
 
-    std::tuple<IO::PacketReader<connection>, packet_type_t> get_next() {
+    std::tuple<std::unique_ptr<IO::PacketReaderBase>, packet_type_t> get_next() {
         while (true) {
             try {
             auto begin = std::chrono::steady_clock::now();
@@ -168,43 +177,55 @@ void server_handler(Session<P> &session, Packet<CONN> conn) {
     try {
         uint64_t session_id = conn._session_id;
         uint64_t bytes_left = conn._data_len;
-        std::cout << "BYTES INCOMING LEN TOTAL: " << bytes_left << "\n";
 
         session.send(
             std::make_unique<Packet<CONNACC>>(Packet<CONNACC>(session_id)));
 
-        std::vector<ASIO::Packet<DATA>> data;
+        // std::vector<ASIO::Packet<DATA>> data;
+        uint32_t packet_number = 0;
 
         while (bytes_left > 0) {
             auto [reader, packet_id] =
                 session.get_next();
             if (packet_id == DATA) {
-                auto data_packet = Packet<DATA>::read(reader, session_id);
+                auto data_packet = Packet<DATA>::read(*reader, session_id);
 
-                if (data_packet._packet_number != data.size()) {
+                if (data_packet._packet_number != packet_number) {
                     session.send(
                         std::make_unique<Packet<RJT>>
                             (Packet<RJT>(session_id,
                                          data_packet._packet_number)));
+
                     throw std::runtime_error(
                         "Data packets not in order, expected:" +
-                        std::to_string(data.size()) + ", received:" +
-                        std::to_string(data.back()._packet_number));
-                }
+                        std::to_string(packet_number) + ", received:" +
+                        std::to_string(data_packet._packet_number));
+                } else if (bytes_left < data_packet._packet_byte_cnt) {
+                    session.send(
+                        std::make_unique<Packet<RJT>>
+                            (Packet<RJT>(session_id,
+                                         data_packet._packet_number)));
 
-                std::cout << "PRINTG FILE-> ";
-                std::fwrite(data_packet._data.data(), 1, 
-                            data_packet._data.size(),stdout);
-                std::cout << std::endl;
-
-                if (bytes_left < data_packet._packet_byte_cnt) {
                     throw std::runtime_error(
                         "Received to much bytes: expected:" +
                         std::to_string(conn._data_len) + ", received:" +
                         std::to_string(conn._data_len - bytes_left));
                 }
+
+                if constexpr (retransmits<P>()) {
+                    session.send(
+                        std::make_unique<Packet<ACC>>
+                            (Packet<ACC>(session_id,
+                                         data_packet._packet_number)));
+                }
+
+                std::cout.write(
+                    data_packet._data.data(), data_packet._data.size());
+                std::cout << std::flush << "\n";
+
+
                 bytes_left -= data_packet._packet_byte_cnt;
-                data.push_back(data_packet);
+                packet_number++;
             } else {
                 throw unexpected_packet(DATA, packet_id);
             }
@@ -222,7 +243,7 @@ void server_handler(Session<P> &session, Packet<CONN> conn) {
 template <protocol_t P>
 void client_handler(
     Session<P> &session, int64_t session_id, std::ifstream file, size_t file_size) {
-    std::cout << "Sending file of size: " << file_size << "\n";
+    DBG_printer("Sending file of size: ", file_size);
 
     session.send(std::make_unique<Packet<CONN>>(
         Packet<CONN>(session_id, P, file_size)));
@@ -234,25 +255,39 @@ void client_handler(
     }
 
     if (id != CONNACC) {
-        throw unexpected_packet(CONN, id);
+        throw unexpected_packet(CONNACC, id);
     }
 
-    Packet<CONNACC>::read(reader, session_id);
+    Packet<CONNACC>::read(*reader, session_id);
 
     for (int i = 0; file.peek() != EOF; i++) {
-        std::vector<char> buffor(IO::MAX_DATA_SIZE);
+        if constexpr (retransmits<P>()) {
+            if (i != 0) {
+                auto [reader2, id2] = session.get_next();
+                if (id2 == RJT) {
+                    throw std::runtime_error("Data packet rejected");
+                } else if (id2 != ACC) {
+                    throw unexpected_packet(ACC, id2);
+                }
+            }
+        }
+        static std::vector<char> buffor(IO::MAX_DATA_SIZE);
+
         file.read(buffor.data(), IO::MAX_DATA_SIZE);
         Packet<DATA> data(session_id, i, file.gcount(), buffor.data());
+
         session.send(std::make_unique<Packet<DATA>>(data));
     }
 
     auto [reader_2, id_2] = session.get_next();
 
-    if (id_2 != RCVD) {
-        throw unexpected_packet(RCVD, id_2);
+    if (id_2 == RCVD) {
+        return;
+    } else if (id_2 == RJT) {
+        throw std::runtime_error("Data packet rejected");
+    } else {
+        throw unexpected_packet(RCVD, id);
     }
-
-    Packet<RCVD>::read(reader_2, session_id);
 }
 }
 

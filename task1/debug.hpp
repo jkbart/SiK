@@ -27,22 +27,18 @@ void printer_in_hex(Arg arg) {
     std::cout << "\"\n";
 }
 
-template<class Arg>
-Arg read_single_var(char *buffor) {
-    Arg var;
-    std::memcpy(&var, buffor, sizeof(Arg));
-    return var;
-}
-
 template<class... Args>
 void DBG_printer(Args... args) {
     if constexpr (!debug)
         return;
-    std::clog << "[DEBUG]\n";
-    (
-        (std::clog << "----[DBG_printer]" << args), 
-        ...
-    );
+    // std::clog << "[DEBUG]\n";
+    // (
+    //     (std::clog << "----[DBG_printer]" << args), 
+    //     ...
+    // );
+    std::clog << "[DEBUG] ";
+    ((std::clog << args << " "), ... );
+    std::clog << "\n" << std::flush;
 }
 
 template<class... Args>
@@ -54,6 +50,7 @@ void DBG_printer_in_hex(Args... args) {
         ((std::clog << "----[DBG_printer]"), printer_in_hex(args)), 
         ...
     );
+    std::clog << "\n" << std::flush;
 }
 
 }

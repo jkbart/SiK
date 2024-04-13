@@ -76,7 +76,7 @@ class unexpected_packet : public std::exception {
           _msg("Unexptected packet: expected:" + packet_to_string(_expected) +
                ", received:" + packet_to_string(_received)) {}
 
-    const char *what() { return _msg.c_str(); }
+    const char *what() const throw() { return _msg.c_str(); }
 };
 
 uint64_t session_id_generate() {
