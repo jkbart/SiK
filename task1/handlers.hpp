@@ -91,7 +91,8 @@ public:
 
     virtual void send(std::unique_ptr<PacketBase> packet) = 0;
     virtual std::tuple<std::unique_ptr<IO::PacketReaderBase>, packet_type_t> 
-        get_next() = 0;
+        get_next(std::chrono::steady_clock::time_point to_begin = 
+            std::chrono::steady_clock::now()) = 0;
 };
 
 template<protocol_t P>
@@ -113,8 +114,11 @@ public:
         packet->send(_socket, &_addr);
     }
 
-    std::tuple<std::unique_ptr<IO::PacketReaderBase>, packet_type_t> get_next() {
-        return get_next_from_session<connection>(_socket, _addr, _session_id);
+    std::tuple<std::unique_ptr<IO::PacketReaderBase>, packet_type_t> get_next(
+        std::chrono::steady_clock::time_point to_begin = 
+            std::chrono::steady_clock::now()) {
+        return get_next_from_session<connection>(
+            _socket, _addr, _session_id, to_begin);
     }
 };
 
@@ -139,27 +143,13 @@ public:
         _last_msg = std::move(packet);
     }
 
-    std::tuple<std::unique_ptr<IO::PacketReaderBase>, packet_type_t> get_next() {
+    std::tuple<std::unique_ptr<IO::PacketReaderBase>, packet_type_t> get_next(
+        std::chrono::steady_clock::time_point to_begin = 
+            std::chrono::steady_clock::now()) {
         while (true) {
             try {
-            auto begin = std::chrono::steady_clock::now();
-
-            // while (true) {
-            //     sockaddr_in addr;
-            //     IO::PacketReader<IO::Socket::UDP> reader(_socket, &_addr, true, 
-            //                                              begin);
-            //     auto [id, session_id] = 
-            //         reader.readGeneric<packet_type_t, int64_t>();
-
-            //     if (session_id == _session_id && 
-            //         addr == _addr) {
-            //         return {reader, id};
-            //     } else if (id == CONN) {
-            //         Packet<CONNRJT>(session_id).send(_socket, &addr);
-            //     }
-            // }
             return get_next_from_session<connection>(_socket, _addr, 
-                                                     _session_id, begin);
+                                                     _session_id, to_begin);
             } catch (IO::timeout_error &e) {
                 if (_last_msg == NULL || _retransmit_cnt <= 0)
                     throw e;
@@ -187,8 +177,19 @@ void server_handler(Session<P> &session, Packet<CONN> conn) {
         while (bytes_left > 0) {
             auto [reader, packet_id] =
                 session.get_next();
+            if constexpr (retransmits<P>()) {
+                if (packet_id == CONN) {
+                    Packet<CONN>::read(*reader, session_id);
+                }
+            }
             if (packet_id == DATA) {
                 auto data_packet = Packet<DATA>::read(*reader, session_id);
+
+                if constexpr (retransmits<P>()) {
+                    if (data_packet._packet_number < packet_number) {
+                        continue;
+                    }
+                }
 
                 if (data_packet._packet_number != packet_number) {
                     session.send(
@@ -260,13 +261,25 @@ void client_handler(
 
     Packet<CONNACC>::read(*reader, session_id);
 
-    for (int i = 0; file.peek() != EOF; i++) {
+    uint32_t packet_number = 0;
+    while (file.peek() != EOF) {
         if constexpr (retransmits<P>()) {
-            if (i != 0) {
+            if (packet_number != 0) {
                 auto [reader2, id2] = session.get_next();
                 if (id2 == RJT) {
                     throw std::runtime_error("Data packet rejected");
-                } else if (id2 != ACC) {
+                } else if (id2 == CONNACC) {
+                    Packet<CONNACC>::read(*reader, session_id);
+                    continue;
+                    // throw unexpected_packet(ACC, id2);
+                } else if (id2 == ACC) {
+                    auto acc = Packet<ACC>::read(*reader, session_id);
+                    if (acc._packet_number < packet_number - 1) {
+                        continue;
+                    } else if (acc._packet_number != packet_number - 1) {
+                        throw unexpected_packet(ACC, id2);
+                    }
+                } else {
                     throw unexpected_packet(ACC, id2);
                 }
             }
@@ -274,9 +287,11 @@ void client_handler(
         static std::vector<char> buffor(IO::MAX_DATA_SIZE);
 
         file.read(buffor.data(), IO::MAX_DATA_SIZE);
-        Packet<DATA> data(session_id, i, file.gcount(), buffor.data());
+        Packet<DATA> data(
+            session_id, packet_number, file.gcount(), buffor.data());
 
         session.send(std::make_unique<Packet<DATA>>(data));
+        packet_number++;
     }
 
     auto [reader_2, id_2] = session.get_next();

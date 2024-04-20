@@ -178,6 +178,7 @@ Arg1& increment(Arg1& arg1, Arg2 arg2) {
 class PacketReaderBase {
   public:
     virtual void readn(void *buff, ssize_t n) = 0;
+    virtual PacketReaderBase& mtb() = 0; // move ptr to begining of buffored data.
     
     std::vector<char> readn(ssize_t n) {
         std::vector<char> buffor(n);
@@ -209,6 +210,8 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
   private:
     Socket &_socket;
     std::chrono::steady_clock::time_point _timeout_begin;
+    std::vector<char> _buff;
+    size_t _next_byte;
     bool _needs_timeout;
 
   public:
@@ -216,7 +219,7 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
         Socket &socket, sockaddr_in *, bool needs_timeout = true,
         std::chrono::steady_clock::time_point timeout_begin =
             std::chrono::steady_clock::now())
-        : _socket{socket},
+        : _socket{socket}, _buff(0), _next_byte(0),
           _timeout_begin(timeout_begin), _needs_timeout{needs_timeout} {}
 
     void readn(void *buff, ssize_t n) {
@@ -231,8 +234,13 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
             _socket.setRecvTimeout(MAX_WAIT * 1000 - timeout);
         }
 
+        size_t old_buff_size = _buff.size();
+        size_t to_read = (old_buff_size + n - _next_byte);
+        _buff.resize(old_buff_size + to_read);
+
         ssize_t ret =
-            recvfrom(_socket, buff, n, MSG_WAITALL, NULL, &address_length);
+            recvfrom(_socket, &_buff[old_buff_size], n, 
+                     MSG_WAITALL, NULL, &address_length);
 
         if (_needs_timeout) {
             _socket.resetRecvTimeout();
@@ -242,10 +250,19 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
             throw timeout_error((int)_socket);
         }
 
-        if (ret != n) {
+        if (ret != to_read) {
+            _buff.resize(old_buff_size + ret);
             throw std::runtime_error(std::string("Failed to read packet: ") +
                                      std::strerror(errno));
         }
+
+        std::memcpy(buff, &_buff[_next_byte], n);
+        _next_byte += n;
+    }
+
+    PacketReaderBase& mtb() {
+        _next_byte = 0;
+        return *this;
     }
 };
 
@@ -301,6 +318,11 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
             throw std::runtime_error(
                 std::string("Readed packet smaller than expected"));
         }
+    }
+
+    PacketReaderBase& mtb() {
+        _bytes_readed = 0;
+        return *this;
     }
 };
 

@@ -21,6 +21,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <tuple>
 
 #include <iostream>
 
@@ -79,6 +80,17 @@ class unexpected_packet : public std::exception {
     const char *what() const throw() { return _msg.c_str(); }
 };
 
+class rejected_data : public std::exception {
+  private:
+    std::string _msg;
+    uint32_t _packet_number;
+  public:
+    rejected_data(uint32_t packet_number) : _packet_number(packet_number),
+          _msg("Data packet " + std::to_string(packet_number) + " rejected") {}
+
+    const char *what() const throw() { return _msg.c_str(); }
+};
+
 uint64_t session_id_generate() {
     // using std::time(0) is not good enough
     static std::mt19937_64 gen(
@@ -92,12 +104,42 @@ class PacketBase {
   public:
     const uint64_t _session_id;
 
-  protected:
+  public:
     PacketBase(uint64_t session_id) : _session_id(session_id) {}
+    PacketBase(IO::PacketReaderBase &reader) 
+    : _session_id(std::get<0>(reader.readGeneric<uint64_t>())) {}
+
+    void send(IO::PacketSender &sender) {
+        sender.add_var<packet_type_t, uint64_t>(getID(), _session_id);
+    }
 
   public:
     virtual void send(IO::Socket &socket, sockaddr_in *receiver) = 0;
     virtual packet_type_t getID() = 0;
+};
+
+class PacketOrderedBase : PacketBase {
+  public:
+    const uint32_t _packet_number;
+
+  public:
+    PacketOrderedBase(uint64_t session_id, uint32_t packet_number) 
+    : PacketBase(session_id), _packet_number(packet_number) {}
+
+
+    PacketOrderedBase(IO::PacketReaderBase &reader) 
+    : PacketBase(reader), 
+    _packet_number(std::get<0>(reader.readGeneric<uint32_t>())) {}
+
+
+    void send(IO::PacketSender &sender) {
+        PacketBase::send(sender);
+        sender.add_var<uint64_t>(_packet_number);
+    }
+
+  // public:
+    // virtual void send(IO::Socket &socket, sockaddr_in *receiver) = 0;
+    // virtual packet_type_t getID() = 0;
 };
 
 template <packet_type_t P> class Packet;
@@ -112,20 +154,28 @@ template <> class Packet<CONN> : public PacketBase {
     Packet(uint64_t session_id, protocol_t protocol, uint32_t data_len)
         : PacketBase(session_id), _protocol(protocol), _data_len(data_len) {}
 
+    Packet(IO::PacketReaderBase &reader) 
+    : PacketBase(reader), 
+    _protocol(std::get<0>(reader.readGeneric<protocol_t>())),
+    _data_len(std::get<0>(reader.readGeneric<uint32_t>())) {}
+
+    // void send(IO::Socket &socket, sockaddr_in *receiver) {
+    //     IO::send_v(socket, receiver, _id, _session_id, _protocol, _data_len);
+    // }
+
     void send(IO::Socket &socket, sockaddr_in *receiver) {
-        IO::send_v(socket, receiver, _id, _session_id, _protocol, _data_len);
+        IO::PacketSender sender(socket, receiver);
+        PacketBase::send(sender);
+        sender.add_var<protocol_t>(_protocol);
+        sender.send();
     }
 
     packet_type_t getID() { return _id; }
 
     static Packet<CONN> read(IO::PacketReaderBase &reader) {
+        reader.mtb();
         auto [session_id, protocol, data_len] =
             reader.readGeneric<uint64_t, protocol_t, uint32_t>();
-        return Packet<CONN>(session_id, protocol, data_len);
-    }
-
-    static Packet<CONN> read(IO::PacketReaderBase &reader, uint64_t session_id) {
-        auto [protocol, data_len] = reader.readGeneric<protocol_t, uint32_t>();
         return Packet<CONN>(session_id, protocol, data_len);
     }
 };
@@ -136,20 +186,23 @@ template <> class Packet<CONNACC> : public PacketBase {
 
   public:
     Packet(uint64_t session_id) : PacketBase(session_id) {}
+    Packet(IO::PacketReaderBase &reader) 
+    : PacketBase(reader) {}
 
+    // void send(IO::Socket &socket, sockaddr_in *receiver) {
+    //     IO::send_v(socket, receiver, _id, _session_id);
+    // }
     void send(IO::Socket &socket, sockaddr_in *receiver) {
-        IO::send_v(socket, receiver, _id, _session_id);
+        IO::PacketSender sender(socket, receiver);
+        PacketBase::send(sender);
+        sender.send();
     }
 
     packet_type_t getID() { return _id; }
 
     static Packet<CONNACC> read(IO::PacketReaderBase &reader) {
+        reader.mtb();
         auto [session_id] = reader.readGeneric<uint64_t>();
-        return Packet<CONNACC>(session_id);
-    }
-
-    static Packet<CONNACC> read(IO::PacketReaderBase &,
-                                uint64_t session_id) {
         return Packet<CONNACC>(session_id);
     }
 };
@@ -160,49 +213,66 @@ template <> class Packet<CONNRJT> : public PacketBase {
 
   public:
     Packet(uint64_t session_id) : PacketBase(session_id) {}
+    Packet(IO::PacketReaderBase &reader) 
+    : PacketBase(reader) {}
+
+    // void send(IO::Socket &socket, sockaddr_in *receiver) {
+    //     IO::send_v(socket, receiver, _id, _session_id);
+    // }
 
     void send(IO::Socket &socket, sockaddr_in *receiver) {
-        IO::send_v(socket, receiver, _id, _session_id);
+        IO::PacketSender sender(socket, receiver);
+        PacketBase::send(sender);
+        // sender.add_var<protocol_t>(_protocol);
+        sender.send();
     }
 
     packet_type_t getID() { return _id; }
 
     static Packet<CONNRJT> read(IO::PacketReaderBase &reader) {
+        reader.mtb();
         auto [session_id] = reader.readGeneric<uint64_t>();
-        return Packet<CONNRJT>(session_id);
-    }
-
-    static Packet<CONNRJT> read(IO::PacketReaderBase &,
-                                uint64_t session_id) {
         return Packet<CONNRJT>(session_id);
     }
 };
 
-template <> class Packet<DATA> : public PacketBase {
+template <> class Packet<DATA> : public PacketOrderedBase {
   public:
     static const packet_type_t _id = DATA;
-    const uint64_t _packet_number;
+    // const uint64_t _packet_number;
     const uint32_t _packet_byte_cnt;
     const std::vector<char> _data;
 
   public:
     Packet(uint64_t session_id, uint64_t packet_number,
                  uint32_t packet_byte_cnt, void *data)
-        : PacketBase(session_id), _packet_number(packet_number),
+        : PacketOrderedBase(session_id, packet_number), // _packet_number(packet_number),
           _packet_byte_cnt(packet_byte_cnt), _data(packet_byte_cnt) {
         std::memcpy((void *)_data.data(), data, packet_byte_cnt);
     }
     Packet(uint64_t session_id, uint64_t packet_number,
                  uint32_t packet_byte_cnt, std::vector<char> data)
-        : PacketBase(session_id), _packet_number(packet_number),
+        : PacketOrderedBase(session_id, packet_number), // _packet_number(packet_number),
           _packet_byte_cnt(packet_byte_cnt), _data(data) {}
 
+    Packet(IO::PacketReaderBase &reader) 
+    : PacketOrderedBase(reader), 
+    _packet_byte_cnt(std::get<0>(reader.readGeneric<uint32_t>())),
+    _data(reader.readn(_packet_byte_cnt)) {}
+
+    // void send(IO::Socket &socket, sockaddr_in *receiver) {
+    //     // send_v<packet_type_t, uint64_t, protocol_t, uint64_t> (socket,
+    //     // receiver, _id,  _session_id, _protocol, _data_len); send_v(socket,
+    //     // receiver, _id, _session_id);
+    //     IO::PacketSender sender(socket, receiver);
+    //     sender.add_var(_id, _session_id, _packet_number, _packet_byte_cnt);
+    //     sender.add_data((char *)_data.data(), _data.size());
+    //     sender.send();
+    // }
     void send(IO::Socket &socket, sockaddr_in *receiver) {
-        // send_v<packet_type_t, uint64_t, protocol_t, uint64_t> (socket,
-        // receiver, _id,  _session_id, _protocol, _data_len); send_v(socket,
-        // receiver, _id, _session_id);
         IO::PacketSender sender(socket, receiver);
-        sender.add_var(_id, _session_id, _packet_number, _packet_byte_cnt);
+        PacketOrderedBase::send(sender);
+        sender.add_var<uint32_t>(_packet_byte_cnt);
         sender.add_data((char *)_data.data(), _data.size());
         sender.send();
     }
@@ -210,72 +280,75 @@ template <> class Packet<DATA> : public PacketBase {
     packet_type_t getID() { return _id; }
 
     static Packet<DATA> read(IO::PacketReaderBase &reader) {
+        reader.mtb();
         auto [session_id, packet_number, packet_byte_cnt] =
             reader.readGeneric<uint64_t, uint64_t, uint32_t>();
 
         return Packet<DATA>(session_id, packet_number, packet_byte_cnt,
                             reader.readn(packet_byte_cnt));
     }
-
-    static Packet<DATA> read(IO::PacketReaderBase &reader, uint64_t session_id) {
-        auto [packet_number, packet_byte_cnt] =
-            reader.readGeneric<uint64_t, uint32_t>();
-
-        return Packet<DATA>(session_id, packet_number, packet_byte_cnt,
-                            reader.readn(packet_byte_cnt));
-    }
 };
 
-template <> class Packet<ACC> : public PacketBase {
+template <> class Packet<ACC> : public PacketOrderedBase {
   public:
     static const packet_type_t _id = ACC;
-    const uint64_t _packet_number;
+    // const uint64_t _packet_number;
 
   public:
     Packet(uint64_t session_id, uint64_t packet_number)
-        : PacketBase(session_id), _packet_number(packet_number) {}
+        : PacketOrderedBase(session_id, packet_number) {} //, _packet_number(packet_number) {}
+        
+    Packet(IO::PacketReaderBase &reader) 
+    : PacketOrderedBase(reader) {}
 
+    // void send(IO::Socket &socket, sockaddr_in *receiver) {
+    //     IO::send_v(socket, receiver, _id, _session_id, _packet_number);
+    // }
     void send(IO::Socket &socket, sockaddr_in *receiver) {
-        IO::send_v(socket, receiver, _id, _session_id, _packet_number);
+        IO::PacketSender sender(socket, receiver);
+        PacketOrderedBase::send(sender);
+        // sender.add_var<protocol_t>(_protocol);
+        sender.send();
     }
 
     packet_type_t getID() { return _id; }
 
     static Packet<ACC> read(IO::PacketReaderBase &reader) {
+        reader.mtb();
         auto [session_id, packet_number] =
             reader.readGeneric<uint64_t, uint64_t>();
         return Packet<ACC>(session_id, packet_number);
     }
-
-    static Packet<ACC> read(IO::PacketReaderBase &reader, uint64_t session_id) {
-        auto [packet_number] = reader.readGeneric<uint64_t>();
-        return Packet<ACC>(session_id, packet_number);
-    }
 };
 
-template <> class Packet<RJT> : public PacketBase {
+template <> class Packet<RJT> : public PacketOrderedBase {
   public:
     static const packet_type_t _id = RJT;
-    const uint64_t _packet_number;
+    // const uint64_t _packet_number;
 
   public:
     Packet(uint64_t session_id, uint64_t packet_number)
-        : PacketBase(session_id), _packet_number(packet_number) {}
+        : PacketOrderedBase(session_id, packet_number) {} //, _packet_number(packet_number) {}
 
+    Packet(IO::PacketReaderBase &reader) 
+    : PacketOrderedBase(reader) {}
+
+    // void send(IO::Socket &socket, sockaddr_in *receiver) {
+    //     IO::send_v(socket, receiver, _id, _session_id, _packet_number);
+    // }
     void send(IO::Socket &socket, sockaddr_in *receiver) {
-        IO::send_v(socket, receiver, _id, _session_id, _packet_number);
+        IO::PacketSender sender(socket, receiver);
+        PacketOrderedBase::send(sender);
+        // sender.add_var<protocol_t>(_protocol);
+        sender.send();
     }
 
     packet_type_t getID() { return _id; }
 
     static Packet<RJT> read(IO::PacketReaderBase &reader) {
+        reader.mtb();
         auto [session_id, packet_number] =
             reader.readGeneric<uint64_t, uint64_t>();
-        return Packet<RJT>(session_id, packet_number);
-    }
-
-    static Packet<RJT> read(IO::PacketReaderBase &reader, uint64_t session_id) {
-        auto [packet_number] = reader.readGeneric<uint64_t>();
         return Packet<RJT>(session_id, packet_number);
     }
 };
@@ -287,20 +360,26 @@ template <> class Packet<RCVD> : public PacketBase {
   public:
     Packet(uint64_t session_id) : PacketBase(session_id) {}
 
+    Packet(IO::PacketReaderBase &reader) 
+    : PacketBase(reader) {}
+
+    // void send(IO::Socket &socket, sockaddr_in *receiver) {
+    //     // send_v<packet_type_t, uint64_t, protocol_t, uint64_t> (socket,
+    //     // receiver, _id,  _session_id, _protocol, _data_len);
+    //     IO::send_v(socket, receiver, _id, _session_id);
+    // }
     void send(IO::Socket &socket, sockaddr_in *receiver) {
-        // send_v<packet_type_t, uint64_t, protocol_t, uint64_t> (socket,
-        // receiver, _id,  _session_id, _protocol, _data_len);
-        IO::send_v(socket, receiver, _id, _session_id);
+        IO::PacketSender sender(socket, receiver);
+        PacketBase::send(sender);
+        sender.send();
     }
+
 
     packet_type_t getID() { return _id; }
 
     static Packet<RCVD> read(IO::PacketReaderBase &reader) {
+        reader.mtb();
         auto [session_id] = reader.readGeneric<uint64_t>();
-        return Packet<RCVD>(session_id);
-    }
-
-    static Packet<RCVD> read(IO::PacketReaderBase &, uint64_t session_id) {
         return Packet<RCVD>(session_id);
     }
 };
