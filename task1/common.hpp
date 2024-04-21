@@ -111,7 +111,7 @@ class PacketBase {
   public:
     PacketBase(session_t session_id) : _session_id(session_id) {}
     PacketBase(IO::PacketReaderBase &reader) 
-    : _session_id(std::get<0>(reader.readGeneric<session_t>())) {}
+    : _session_id(std::get<1>(reader.readGeneric<packet_type_t, session_t>())) {}
 
     void send(IO::PacketSender &sender) {
         sender.add_var<packet_type_t, session_t>(getID(), _session_id);
@@ -166,7 +166,7 @@ template <> class Packet<CONN> : public PacketBase {
     void send(IO::Socket &socket, sockaddr_in *receiver) {
         IO::PacketSender sender(socket, receiver);
         PacketBase::send(sender);
-        sender.add_var<protocol_t>(_protocol);
+        sender.add_var<protocol_t, b_cnt_t>(_protocol, _data_len);
         sender.send();
     }
 

@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 #include <iostream>
+#include <algorithm>
 
 #include "debug.hpp"
 using namespace DEBUG_NS;
@@ -211,7 +212,7 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
     Socket &_socket;
     std::chrono::steady_clock::time_point _timeout_begin;
     std::vector<char> _buff;
-    size_t _next_byte;
+    ssize_t _next_byte;
     bool _needs_timeout;
 
   public:
@@ -232,28 +233,34 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
             }
 
             _socket.setRecvTimeout(MAX_WAIT * 1000 - timeout);
-        }
-
-        size_t old_buff_size = _buff.size();
-        size_t to_read = (old_buff_size + n - _next_byte);
-        _buff.resize(old_buff_size + to_read);
-
-        ssize_t ret =
-            recvfrom(_socket, &_buff[old_buff_size], n, 
-                     MSG_WAITALL, NULL, &address_length);
-
-        if (_needs_timeout) {
+        } else {
             _socket.resetRecvTimeout();
         }
 
-        if (errno == ETIMEDOUT) {
-            throw timeout_error((int)_socket);
-        }
+        ssize_t old_buff_size = _buff.size();
+        // ssize_t to_read = (old_buff_size + n - _next_byte);
+        ssize_t to_read = std::max((n + _next_byte - old_buff_size), (ssize_t)0);
+        if (0 < to_read) {
+            _buff.resize(old_buff_size + to_read);
 
-        if (ret != to_read) {
-            _buff.resize(old_buff_size + ret);
-            throw std::runtime_error(std::string("Failed to read packet: ") +
-                                     std::strerror(errno));
+            DBG_printer("TCP start read", old_buff_size, to_read);
+            ssize_t ret =
+                recvfrom(_socket, &_buff[old_buff_size], to_read, 
+                         MSG_WAITALL, NULL, &address_length);
+            DBG_printer("TCP end read");
+
+            if (_needs_timeout) {
+                _socket.resetRecvTimeout();
+                if (ret != to_read && (errno == ETIMEDOUT || errno == EAGAIN)) {
+                    throw timeout_error((int)_socket);
+                }
+            }
+
+            if (ret != to_read) {
+                _buff.resize(old_buff_size + ret);
+                throw std::runtime_error(std::string("Failed to read packet: ") +
+                                         std::strerror(errno));
+            }
         }
 
         std::memcpy(buff, &_buff[_next_byte], n);
@@ -282,11 +289,14 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
             int timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - timeout_begin)
                               .count();
+            DBG_printer("Reader timout left", MAX_WAIT * 1000 - timeout);
             if (MAX_WAIT * 1000 - timeout <= 0) {
                 throw timeout_error((int)_socket);
             }
 
             _socket.setRecvTimeout(MAX_WAIT * 1000 - timeout);
+        } else {
+            _socket.resetRecvTimeout();
         }
 
         ssize_t ret = recvfrom(_socket, _buff.data(), MAX_UDP_PACKET_SIZE,
@@ -296,10 +306,13 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
 
         if (needs_timeout) {
             _socket.resetRecvTimeout();
-        }
-
-        if (errno == ETIMEDOUT || errno == EAGAIN) {
-            throw timeout_error((int)_socket);
+            if (ret == -1 && (errno == ETIMEDOUT || errno == EAGAIN)) {
+                DBG_printer(std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - timeout_begin)
+                              .count());
+                DBG_printer("throiwing timeout", std::strerror(errno));
+                throw timeout_error((int)_socket);
+            }
         }
 
         if (ret == -1) {
@@ -311,6 +324,7 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
     }
 
     void readn(void *buff, ssize_t n) {
+        DBG_printer("wanted: ", n, "ptr: ", _bytes_readed, "total: ", _buff.size());
         if (n <= (ssize_t)_buff.size() - _bytes_readed) {
             std::memcpy(buff, _buff.data() + _bytes_readed, n);
             _bytes_readed += n;

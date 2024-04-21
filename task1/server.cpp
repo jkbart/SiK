@@ -52,7 +52,8 @@ int main(int argc, char *argv[]) {
                 throw unexpected_packet(CONN, id);
             }
 
-            Packet<CONN> conn = Packet<CONN>::read(reader);
+            reader.mtb();
+            Packet<CONN> conn(reader);
 
             Session<tcp> session(
                 client_socket, client_address, conn._session_id);
@@ -84,7 +85,8 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
-            Packet<CONN> conn = Packet<CONN>::read(reader);
+            reader.mtb();
+            Packet<CONN> conn(reader);
 
             if (conn._protocol == udp) {
                 DBG_printer("connected via udp protocol");

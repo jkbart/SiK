@@ -1,6 +1,6 @@
 #include "common.hpp"
 #include "io.hpp"
-#include "handlers.hpp"
+#include "handlers2.hpp"
 #include "debug.hpp"
 
 #include <iostream>
@@ -8,17 +8,6 @@
 
 using namespace ASIO;
 using namespace DEBUG_NS;
-
-std::ifstream::pos_type filesize(const char* filename)
-{
-    std::ifstream file(filename, std::ifstream::ate | std::ifstream::binary);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open the file");
-        return 1;
-    }
-    return file.tellg(); 
-}
-
 
 int main(int argc, char *argv[]) {
     try {
@@ -31,12 +20,9 @@ int main(int argc, char *argv[]) {
 
     sockaddr_in server_address = IO::get_server_address(argv[2], port);
 
-    std::ifstream file(argv[4], std::ios::binary); 
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open the file");
-    }
+    session_t session_id = session_id_generate();
 
-    size_t file_size = filesize(argv[4]);
+    File file(argv[4], session_id);
 
     std::optional<Packet<CONN>> conn;
 
@@ -49,26 +35,23 @@ int main(int argc, char *argv[]) {
             throw std::runtime_error("cannot connect to the server");
         }
 
-        int64_t session_id = session_id_generate();
         Session<tcp> session(socket, server_address, session_id);
 
-        client_handler(session, session_id, std::move(file), file_size);
+        client_handler(session, session_id, file);
     } else if (s_protocol == "udp") {
         IO::Socket socket(IO::Socket::UDP);
         std::cout << "Connecting... \n";
 
-        int64_t session_id = session_id_generate();
         Session<udp> session(socket, server_address, session_id);
 
-        client_handler(session, session_id, std::move(file), file_size);
+        client_handler(session, session_id, file);
     } else if (s_protocol == "udpr") {
         IO::Socket socket(IO::Socket::UDP);
         std::cout << "Connecting... \n";
 
-        int64_t session_id = session_id_generate();
         Session<udpr> session(socket, server_address, session_id);
 
-        client_handler(session, session_id, std::move(file), file_size);
+        client_handler(session, session_id, file);
     }
     } catch (std::exception &e) {
         std::cerr << "[ERROR] " << e.what() << "\n";
