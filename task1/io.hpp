@@ -29,6 +29,7 @@ using namespace DEBUG_NS;
 
 #include "protconst.h"
 
+// Operator overload for easy comparison of 2 addresses.
 bool operator==(const sockaddr_in &lhs, const sockaddr_in &rhs) {
     return (lhs.sin_addr.s_addr == rhs.sin_addr.s_addr) &&
            (lhs.sin_port == rhs.sin_port);
@@ -37,7 +38,7 @@ bool operator==(const sockaddr_in &lhs, const sockaddr_in &rhs) {
 namespace IO {
 constexpr int MAX_UDP_PACKET_SIZE = 65'535;
 // constexpr int MAX_DATA_SIZE = 64'000;
-constexpr int MAX_DATA_SIZE = 6;
+constexpr int MAX_DATA_SIZE = 100;
 
 socklen_t address_length = (socklen_t)sizeof(sockaddr_in);
 
@@ -52,6 +53,7 @@ class timeout_error : public std::exception {
     const char *what() const throw() { return _msg.c_str(); }
 };
 
+// Socket wrapper for easier interface.
 class Socket {
   public:
     enum connection_t : int { TCP = SOCK_STREAM, UDP = SOCK_DGRAM };
@@ -113,7 +115,6 @@ class Socket {
         timeval timeout;
         timeout.tv_sec = millis / 1000;
         timeout.tv_usec = (millis % 1000) * 1000;
-        // std::cout << millis / 1000 << " " << (millis % 10000) * 1000 << "\n";
         setsockopt(RCVTIMEO, &timeout, sizeof(timeval));
     }
 
@@ -121,23 +122,14 @@ class Socket {
         timeval timeout;
         timeout.tv_sec = millis / 1000;
         timeout.tv_usec = (millis % 1000) * 1000;
-        // std::cout << millis / 1000 << " " << (millis % 10000) * 1000 << "\n";
         setsockopt(SNDTIMEO, &timeout, sizeof(timeval));
     }
 
     void resetRecvTimeout() {
-        // timeval timeout;
-        // timeout.tv_sec = 0;
-        // timeout.tv_usec = 0;
-        // setsockopt(RCVTIMEO, &timeout, sizeof(timeval));
         setRecvTimeout(0);
     }
 
     void resetSendTimeout() {
-        // timeval timeout;
-        // timeout.tv_sec = 0;
-        // timeout.tv_usec = 0;
-        // setsockopt(RCVTIMEO, &timeout, sizeof(timeval));
         setSendTimeout(0);
     }
 
@@ -155,13 +147,14 @@ class Socket {
         setSendTimeout(MAX_WAIT * 1000);
     }
 
-    Socket(int fd) { 
+    Socket(int fd) {
         *_socket_fd = fd;
         setRecvTimeout(MAX_WAIT * 1000);
         setSendTimeout(MAX_WAIT * 1000);
     }
 };
 
+// Helper functions for template pack parameter operations.
 template<class Arg>
 Arg read_single_var(char *buffor) {
     Arg var;
@@ -175,33 +168,30 @@ Arg1& increment(Arg1& arg1, Arg2 arg2) {
     return arg1;
 }
 
-/* Classes used to read individual packets with timout set to MAX_WAIT */
+// Classes used to read individual packets with timout.
 class PacketReaderBase {
   public:
+    // Basic operation of reading n bytes to bufor.
     virtual void readn(void *buff, ssize_t n) = 0;
-    virtual PacketReaderBase& mtb() = 0; // move ptr to begining of buffored data.
+
+    // Move packet buffor pointer to begining.
+    virtual PacketReaderBase& mtb() = 0;
     
+    // Returns vector with n next bytes.
     std::vector<char> readn(ssize_t n) {
         std::vector<char> buffor(n);
         readn(buffor.data(), n);
         return buffor;
     }
 
+    // Returns tuple with template types readed from bufor.
     template <class... Args> std::tuple<Args...> readGeneric() {
         ssize_t len = (sizeof(Args) + ... + 0);
         auto buffor = readn(len);
-        // int offset = 0;
-        // return {*((Args *)(buffor.data() + (offset += sizeof(Args)) -
-        //                    sizeof(Args)))...};
-        // char *ptr = buffor.data();
-        // ((printer(read_single_var<Args>((ptr += sizeof(Args)) - 
-        //                                    sizeof(Args))),...));
+
         char *offset = buffor.data();
-        // return {read_single_var<Args>((offset += sizeof(Args)) - 
-        //                                sizeof(Args))...};
         return {read_single_var<Args>(increment(offset, sizeof(Args)) - 
                                       sizeof(Args))...};
-
     }
 };
 
@@ -238,16 +228,15 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
         }
 
         ssize_t old_buff_size = _buff.size();
-        // ssize_t to_read = (old_buff_size + n - _next_byte);
-        ssize_t to_read = std::max((n + _next_byte - old_buff_size), (ssize_t)0);
+        ssize_t to_read = 
+            std::max((n + _next_byte - old_buff_size), (ssize_t)0);
+
         if (0 < to_read) {
             _buff.resize(old_buff_size + to_read);
 
-            DBG_printer("TCP start read", old_buff_size, to_read);
             ssize_t ret =
                 recvfrom(_socket, &_buff[old_buff_size], to_read, 
                          MSG_WAITALL, NULL, &address_length);
-            DBG_printer("TCP end read");
 
             if (_needs_timeout) {
                 _socket.resetRecvTimeout();
@@ -289,7 +278,6 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
             int timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - timeout_begin)
                               .count();
-            DBG_printer("Reader timout left", MAX_WAIT * 1000 - timeout);
             if (MAX_WAIT * 1000 - timeout <= 0) {
                 throw timeout_error((int)_socket);
             }
@@ -302,15 +290,11 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
         ssize_t ret = recvfrom(_socket, _buff.data(), MAX_UDP_PACKET_SIZE,
                            MSG_WAITALL, (sockaddr *)addr, &address_length);
 
-        // DBG_printer("UDP reader readed: ", std::to_string(ret), " at once");
 
         if (needs_timeout) {
             _socket.resetRecvTimeout();
+
             if (ret == -1 && (errno == ETIMEDOUT || errno == EAGAIN)) {
-                DBG_printer(std::chrono::duration_cast<std::chrono::milliseconds>(
-                              std::chrono::steady_clock::now() - timeout_begin)
-                              .count());
-                DBG_printer("throiwing timeout", std::strerror(errno));
                 throw timeout_error((int)_socket);
             }
         }
@@ -324,7 +308,6 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
     }
 
     void readn(void *buff, ssize_t n) {
-        DBG_printer("wanted: ", n, "ptr: ", _bytes_readed, "total: ", _buff.size());
         if (n <= (ssize_t)_buff.size() - _bytes_readed) {
             std::memcpy(buff, _buff.data() + _bytes_readed, n);
             _bytes_readed += n;
@@ -340,13 +323,12 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
     }
 };
 
+// Base function used to send data over socket.
 void send_n(Socket &socket, sockaddr_in *addr, char *buffor, ssize_t len) {
     ssize_t sent = 0;
     while (sent != len) {
         ssize_t ret = sendto((int)socket, buffor + sent, len - sent, 0,
                          (sockaddr *)addr, address_length);
-
-        // DBG_printer("send_n sended: ", std::to_string(ret));
 
         if (ret == 0) {
             throw std::runtime_error(std::string("Failed to send packet: ") +
@@ -356,26 +338,21 @@ void send_n(Socket &socket, sockaddr_in *addr, char *buffor, ssize_t len) {
     }
 }
 
+// Sends argument variables over socket.
 template <class... Args>
 void send_v(Socket &socket, sockaddr_in *addr, Args... args) {
     ssize_t len = (sizeof(Args) + ... + 0);
     std::vector<char> buffor(len);
     ssize_t offset = 0;
-    ((std::memcpy((buffor.data() + (offset += sizeof(Args)) - sizeof(Args)),
-          &args, sizeof(Args))),
+    ((std::memcpy((
+        buffor.data() + increment(offset, sizeof(Args)) - sizeof(Args)),
+        &args, sizeof(Args))),
      ...);
 
-    // std::cout << "BUFFOR OT SEND: ";    
-    // for(int i = 0; i < len; i++) {
-    //     std::cout << (unsigned int)buffor[i] << " ";
-    // } std::cout << "\n";
-    // char *ptr = buffor.data();
-    // ((printer(read_single_var<Args>((ptr += sizeof(Args)) - 
-    //                                    sizeof(Args))),...));
-    // std::cout << "\n";
     send_n(socket, addr, buffor.data(), len);
 }
 
+// Class used to buffer data before sending.
 class PacketSender {
   private:
     Socket &_socket;
@@ -400,8 +377,9 @@ class PacketSender {
 
         _buffor.resize(offset_old + len);
         ssize_t offset = 0;
-        ((std::memcpy(_buffor.data() + offset_old + (offset += sizeof(Args)) -
-                    sizeof(Args), &args, sizeof(Args))),
+        ((std::memcpy(
+            _buffor.data() + offset_old +  increment(offset, sizeof(Args)) -
+            sizeof(Args), &args, sizeof(Args))),
          ...);
 
         return *this;
@@ -410,6 +388,7 @@ class PacketSender {
     void send() { send_n(_socket, _addr, _buffor.data(), _buffor.size()); }
 };
 
+// Functions from labs with added exceptions.
 uint16_t read_port(char const *string) {
     char *endptr;
     errno = 0;

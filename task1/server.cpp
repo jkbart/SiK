@@ -1,12 +1,12 @@
 #include "common.hpp"
 #include "io.hpp"
-#include "handlers2.hpp"
+#include "interface.hpp"
 #include "debug.hpp"
 
 #include <iostream>
 #include <string>
 
-using namespace ASIO;
+using namespace PPCB;
 using namespace DEBUG_NS;
 
 int main(int argc, char *argv[]) {
@@ -41,6 +41,7 @@ int main(int argc, char *argv[]) {
             try {
             sockaddr_in client_address;
 
+            socket.resetRecvTimeout();
             IO::Socket client_socket(accept(
                 (int)socket, (sockaddr *)&client_address, &IO::address_length));
 
@@ -48,8 +49,8 @@ int main(int argc, char *argv[]) {
 
             IO::PacketReader<IO::Socket::TCP> reader(client_socket, NULL);
             auto [id] = reader.readGeneric<packet_type_t>();
-            if (id != ASIO::CONN) {
-                throw unexpected_packet(CONN, id);
+            if (id != CONN) {
+                throw unexpected_packet(CONN, std::nullopt, id, std::nullopt);
             }
 
             reader.mtb();
@@ -58,7 +59,6 @@ int main(int argc, char *argv[]) {
             Session<tcp> session(
                 client_socket, client_address, conn._session_id);
 
-            std::cout << "server_handler\n";
             server_handler(session, conn);
             } catch (std::exception &e) {
                 std::cerr << "[ERROR][SINGLE CONNECTION] " << e.what() << "\n";
@@ -79,9 +79,10 @@ int main(int argc, char *argv[]) {
 
             auto [id] = reader.readGeneric<packet_type_t>();
 
-            DBG_printer("UDP server waiting for client received id: ", packet_to_string(id));
+            DBG_printer("UDP server waiting for client received id: ", 
+                packet_to_string(id));
 
-            if (id != ASIO::CONN) {
+            if (id != CONN) {
                 continue;
             }
 
@@ -109,31 +110,7 @@ int main(int argc, char *argv[]) {
             }
         }
     } 
-    // else if (s_protocol == std::string("udpr")) {
-    //     std::cout << "runnning udpr protocol\n";
-    //     // return 0;
-    //     IO::Socket socket(IO::Socket::UDP);
-
-    //     while (true) {
-    //         sockaddr_in client_address;
-
-    //         IO::PacketReader<IO::Socket::UDP> reader(socket, &client_address,
-    //                                                  false);
-    //         auto [id] = reader.readGeneric<packet_type_t>();
-    //         if (id != ASIO::CONN) {
-    //             continue;
-    //             // throw unexpected_packet(CONN, id);
-    //         }
-
-    //         Packet<CONN> conn = Packet<CONN>::read(reader);
-
-    //         Session<udpr> session(
-    //             socket, client_address, conn._session_id);
-
-    //         server_handler(session, conn);
-    //     }
-    // }
     } catch (std::exception &e) {
-        std::cerr << "[ERROR] " << e.what() << "\n";
+        std::cerr << "[ERROR][FATAL] " << e.what() << "\n";
     }
 }

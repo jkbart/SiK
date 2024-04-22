@@ -28,7 +28,7 @@ void printer_in_hex(Arg arg) {
 }
 
 template<class... Args>
-void DBG_printer(Args... args) {
+void DBG_printer(const Args&... args) {
     if constexpr (!debug)
         return;
     // std::clog << "[DEBUG]\n";
