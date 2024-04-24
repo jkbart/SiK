@@ -145,6 +145,19 @@ class rejected_data : public std::exception {
     const char *what() const throw() { return _msg.c_str(); }
 };
 
+class data_packet_smaller_than_expected : public std::exception {
+  private:
+    std::string _msg;
+
+  public:
+    const int _nr;
+    data_packet_smaller_than_expected(int nr)
+        : _nr(nr), _msg("Data packet number" + 
+            std::to_string(_nr) + " has less bytes than expected") {}
+    const char *what() const throw() { return _msg.c_str(); }
+};
+
+
 // Random session id generator.
 session_t session_id_generate() {
     static std::mt19937_64 gen(std::random_device{}());
@@ -156,13 +169,12 @@ class PacketBase {
   public:
     const session_t _session_id;
 
-  public:
     PacketBase(session_t session_id) : _session_id(session_id) {}
     PacketBase(IO::PacketReaderBase &reader) 
     : _session_id(std::get<1>(reader.readGeneric<packet_type_t, session_t>())) 
     {}
 
-    void send(IO::PacketSender &sender) const {
+    void fillSender(IO::PacketSender &sender) const {
         sender.add_var<packet_type_t, session_t>(getID(), _session_id);
     }
 
@@ -175,15 +187,17 @@ class PacketBase {
         return os;
     }
 
-    virtual void send(IO::Socket &socket, sockaddr_in *receiver) const = 0;
+    virtual IO::PacketSender 
+        getSender(IO::Socket &socket, sockaddr_in *receiver) const = 0;
     virtual packet_type_t getID() const = 0;
+
+    virtual ~PacketBase() = default;
 };
 
 class PacketOrderedBase : public PacketBase {
   public:
     const p_cnt_t _packet_number;
 
-  public:
     PacketOrderedBase(session_t session_id, p_cnt_t packet_number) 
     : PacketBase(session_id), _packet_number(packet_number) {}
 
@@ -193,15 +207,18 @@ class PacketOrderedBase : public PacketBase {
     _packet_number(to_host(std::get<0>(reader.readGeneric<p_cnt_t>()))) {}
 
 
-    void send(IO::PacketSender &sender) const {
-        PacketBase::send(sender);
+    void fillSender(IO::PacketSender &sender) const {
+        PacketBase::fillSender(sender);
         sender.add_var<p_cnt_t>(to_net(_packet_number));
     }
 
     virtual packet_type_t getID() const = 0;
     virtual void printer(std::ostream& os) const {
-        os << "<" << packet_to_string(getID()) << " nr:" << _packet_number << ">";
+        os << "<" << packet_to_string(getID()) 
+           << " nr:" << _packet_number << ">";
     }
+
+    virtual ~PacketOrderedBase() = default;
 };
 
 template <packet_type_t P> class Packet;
@@ -221,11 +238,11 @@ template <> class Packet<CONN> : public PacketBase {
     _protocol(std::get<0>(reader.readGeneric<protocol_t>())),
     _data_len(to_host(std::get<0>(reader.readGeneric<b_cnt_t>()))) {}
 
-    void send(IO::Socket &socket, sockaddr_in *receiver) const {
+    IO::PacketSender getSender(IO::Socket &socket, sockaddr_in *receiver) const {
         IO::PacketSender sender(socket, receiver);
-        PacketBase::send(sender);
+        PacketBase::fillSender(sender);
         sender.add_var<protocol_t, b_cnt_t>(_protocol, to_net(_data_len));
-        sender.send();
+        return sender;
     }
 
     packet_type_t getID() const { return _id; }
@@ -240,10 +257,10 @@ template <> class Packet<CONNACC> : public PacketBase {
     Packet(IO::PacketReaderBase &reader) 
     : PacketBase(reader) {}
 
-    void send(IO::Socket &socket, sockaddr_in *receiver) const {
+    IO::PacketSender getSender(IO::Socket &socket, sockaddr_in *receiver) const {
         IO::PacketSender sender(socket, receiver);
-        PacketBase::send(sender);
-        sender.send();
+        PacketBase::fillSender(sender);
+        return sender;
     }
 
     packet_type_t getID() const { return _id; }
@@ -258,10 +275,10 @@ template <> class Packet<CONNRJT> : public PacketBase {
     Packet(IO::PacketReaderBase &reader) 
     : PacketBase(reader) {}
 
-    void send(IO::Socket &socket, sockaddr_in *receiver) const {
+    IO::PacketSender getSender(IO::Socket &socket, sockaddr_in *receiver) const {
         IO::PacketSender sender(socket, receiver);
-        PacketBase::send(sender);
-        sender.send();
+        PacketBase::fillSender(sender);
+        return sender;
     }
 
     packet_type_t getID() const { return _id; }
@@ -288,17 +305,25 @@ template <> class Packet<DATA> : public PacketOrderedBase {
     Packet(IO::PacketReaderBase &reader) 
     : PacketOrderedBase(reader), 
     _packet_byte_cnt(to_host(std::get<0>(reader.readGeneric<b_cnt_t>()))),
-    _data(reader.readn(_packet_byte_cnt)) {}
+    _data(try_to_read_data(reader)) {}
 
-    void send(IO::Socket &socket, sockaddr_in *receiver) const {
+    IO::PacketSender getSender(IO::Socket &socket, sockaddr_in *receiver) const {
         IO::PacketSender sender(socket, receiver);
-        PacketOrderedBase::send(sender);
+        PacketOrderedBase::fillSender(sender);
         sender.add_var<b_cnt_t>(to_net(_packet_byte_cnt));
         sender.add_data((char *)_data.data(), _data.size());
-        sender.send();
+        return sender;
     }
 
     packet_type_t getID() const { return _id; }
+  private:
+    std::vector<char> try_to_read_data(IO::PacketReaderBase &reader) {
+        try {
+            return reader.readn(_packet_byte_cnt);
+        } catch (IO::packet_smaller_than_expected &e) {
+            throw data_packet_smaller_than_expected(_packet_number);
+        }
+    }
 };
 
 template <> class Packet<ACC> : public PacketOrderedBase {
@@ -312,10 +337,10 @@ template <> class Packet<ACC> : public PacketOrderedBase {
     Packet(IO::PacketReaderBase &reader) 
     : PacketOrderedBase(reader) {}
 
-    void send(IO::Socket &socket, sockaddr_in *receiver) const {
+    IO::PacketSender getSender(IO::Socket &socket, sockaddr_in *receiver) const {
         IO::PacketSender sender(socket, receiver);
-        PacketOrderedBase::send(sender);
-        sender.send();
+        PacketOrderedBase::fillSender(sender);
+        return sender;
     }
 
     packet_type_t getID() const { return _id; }
@@ -332,10 +357,10 @@ template <> class Packet<RJT> : public PacketOrderedBase {
     Packet(IO::PacketReaderBase &reader) 
     : PacketOrderedBase(reader) {}
 
-    void send(IO::Socket &socket, sockaddr_in *receiver) const {
+    IO::PacketSender getSender(IO::Socket &socket, sockaddr_in *receiver) const {
         IO::PacketSender sender(socket, receiver);
-        PacketOrderedBase::send(sender);
-        sender.send();
+        PacketOrderedBase::fillSender(sender);
+        return sender;
     }
 
     packet_type_t getID() const { return _id; }
@@ -351,12 +376,11 @@ template <> class Packet<RCVD> : public PacketBase {
     Packet(IO::PacketReaderBase &reader) 
     : PacketBase(reader) {}
 
-    void send(IO::Socket &socket, sockaddr_in *receiver) const {
+    IO::PacketSender getSender(IO::Socket &socket, sockaddr_in *receiver) const {
         IO::PacketSender sender(socket, receiver);
-        PacketBase::send(sender);
-        sender.send();
+        PacketBase::fillSender(sender);
+        return sender;
     }
-
 
     packet_type_t getID() const { return _id; }
 };

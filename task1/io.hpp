@@ -37,8 +37,8 @@ bool operator==(const sockaddr_in &lhs, const sockaddr_in &rhs) {
 
 namespace IO {
 constexpr int MAX_UDP_PACKET_SIZE = 65'535;
-// constexpr int MAX_DATA_SIZE = 64'000;
-constexpr int MAX_DATA_SIZE = 100;
+constexpr int MAX_DATA_SIZE = 64'000;
+constexpr int OPTIMAL_DATA_SIZE = 1400; // defualt MTU size is 1500
 
 socklen_t address_length = (socklen_t)sizeof(sockaddr_in);
 
@@ -49,9 +49,23 @@ class timeout_error : public std::exception {
 
   public:
     timeout_error(int fd)
-        : _fd(fd), _msg("Socket on descriptor " + std::to_string(_fd) + " timed out") {}
+        : _fd(fd), _msg("Socket on descriptor " + 
+            std::to_string(_fd) + " timed out") {}
     const char *what() const throw() { return _msg.c_str(); }
 };
+
+class packet_smaller_than_expected : public std::exception {
+  private:
+    int _fd;
+    std::string _msg;
+
+  public:
+    packet_smaller_than_expected(int fd)
+        : _fd(fd), _msg("Packet readed from descriptor " + 
+            std::to_string(_fd) + " has less bytes than expected") {}
+    const char *what() const throw() { return _msg.c_str(); }
+};
+
 
 // Socket wrapper for easier interface.
 class Socket {
@@ -168,7 +182,7 @@ Arg1& increment(Arg1& arg1, Arg2 arg2) {
     return arg1;
 }
 
-// Classes used to read individual packets with timout.
+// Classes used to read individual packets with timeout.
 class PacketReaderBase {
   public:
     // Basic operation of reading n bytes to bufor.
@@ -193,6 +207,8 @@ class PacketReaderBase {
         return {read_single_var<Args>(increment(offset, sizeof(Args)) - 
                                       sizeof(Args))...};
     }
+
+    virtual ~PacketReaderBase() = default;
 };
 
 template <Socket::connection_t C> class PacketReader;
@@ -247,8 +263,10 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
 
             if (ret != to_read) {
                 _buff.resize(old_buff_size + ret);
-                throw std::runtime_error(std::string("Failed to read packet: ") +
-                                         std::strerror(errno));
+                throw std::runtime_error(
+                    std::string("Failed to read packet (tcp) (recvfrom error): ") +
+                    std::strerror(errno));
+                // throw packet_smaller_than_expected(_socket);
             }
         }
 
@@ -312,8 +330,7 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
             std::memcpy(buff, _buff.data() + _bytes_readed, n);
             _bytes_readed += n;
         } else {
-            throw std::runtime_error(
-                std::string("Readed packet smaller than expected"));
+            throw packet_smaller_than_expected(_socket);
         }
     }
 
@@ -324,22 +341,54 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
 };
 
 // Base function used to send data over socket.
-void send_n(Socket &socket, sockaddr_in *addr, char *buffor, ssize_t len) {
+template<Socket::connection_t C>
+void send_n(Socket &socket, sockaddr_in *addr, char *buffor, ssize_t len);
+
+template<>
+void send_n<Socket::TCP>
+    (Socket &socket, sockaddr_in *addr, char *buffor, ssize_t len) {
     ssize_t sent = 0;
     while (sent != len) {
         ssize_t ret = sendto((int)socket, buffor + sent, len - sent, 0,
                          (sockaddr *)addr, address_length);
+        DBG_printer("SENDTO returned", ret, "of", len - sent);
 
-        if (ret == 0) {
-            throw std::runtime_error(std::string("Failed to send packet: ") +
-                                     std::strerror(errno));
+        if (ret <= 0) {
+            throw std::runtime_error(
+                std::string("TCP failed to send packet: ") +
+                std::strerror(errno));
         }
         sent += ret;
     }
 }
 
+template<>
+void send_n<Socket::UDP>
+    (Socket &socket, sockaddr_in *addr, char *buffor, ssize_t len) {
+    if (len > MAX_UDP_PACKET_SIZE) {
+        throw std::runtime_error(
+            std::string("UDP tried to send more than max packet size bytes: ") + 
+            std::to_string(len) + std::string("/") + 
+            std::to_string(MAX_UDP_PACKET_SIZE));
+    }
+    ssize_t ret = sendto((int)socket, buffor, len, 0,
+                         (sockaddr *)addr, address_length);
+
+    // DBG_printer("SENDTO returned", ret, "of", len);
+
+    if (ret <= 0) {
+        throw std::runtime_error(std::string("Failed to send packet: ") +
+                                     std::strerror(errno));
+    }
+
+    if (ret != len) {
+        throw std::runtime_error(
+            std::string("UDP failed to send all data in one packet: "));
+    }
+}
+
 // Sends argument variables over socket.
-template <class... Args>
+template <Socket::connection_t C, class... Args>
 void send_v(Socket &socket, sockaddr_in *addr, Args... args) {
     ssize_t len = (sizeof(Args) + ... + 0);
     std::vector<char> buffor(len);
@@ -349,7 +398,7 @@ void send_v(Socket &socket, sockaddr_in *addr, Args... args) {
         &args, sizeof(Args))),
      ...);
 
-    send_n(socket, addr, buffor.data(), len);
+    send_n<C>(socket, addr, buffor.data(), len);
 }
 
 // Class used to buffer data before sending.
@@ -385,7 +434,8 @@ class PacketSender {
         return *this;
     }
 
-    void send() { send_n(_socket, _addr, _buffor.data(), _buffor.size()); }
+    template<Socket::connection_t C>
+    void send() { send_n<C>(_socket, _addr, _buffor.data(), _buffor.size()); }
 };
 
 // Functions from labs with added exceptions.

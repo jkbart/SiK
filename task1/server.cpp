@@ -9,6 +9,66 @@
 using namespace PPCB;
 using namespace DEBUG_NS;
 
+template <protocol_t P>
+void server_handler(Session<P> &session, Packet<CONN> conn) {
+    session_t session_id = conn._session_id;
+    b_cnt_t bytes_left = conn._data_len;
+
+    session.send(
+        std::make_unique<Packet<CONNACC>>(session_id));
+
+    p_cnt_t packet_number = 0;
+
+    try {
+    while (bytes_left > 0) {
+        auto [reader, packet_id] =
+            session.template get_next<CONN, DATA>(0, packet_number);
+
+        if (packet_id == DATA) {
+            Packet<DATA> data_packet(*reader);
+
+            if (data_packet._packet_number != packet_number) {
+                session.send(std::make_unique<Packet<RJT>>
+                        (session_id, data_packet._packet_number));
+                throw unexpected_packet(DATA, packet_number, 
+                    DATA, data_packet._packet_number);
+            } else if (bytes_left < data_packet._packet_byte_cnt) {
+                session.send(
+                    std::make_unique<Packet<RJT>>
+                        (session_id, data_packet._packet_number));
+
+                throw std::runtime_error(
+                    "Received to much bytes: left to read:" +
+                    std::to_string(conn._data_len) + ", received:" +
+                    std::to_string(conn._data_len - bytes_left));
+            }
+
+            std::cout.write(
+                data_packet._data.data(), data_packet._data.size());
+            std::cout << std::flush;
+
+            bytes_left -= data_packet._packet_byte_cnt;
+            packet_number++;
+
+            if constexpr (retransmits<P>()) {
+                if (bytes_left != 0) {
+                    session.send(
+                        std::make_unique<Packet<ACC>>
+                            (session_id, data_packet._packet_number));
+                }
+            }
+        } else {
+            throw unexpected_packet(DATA, std::nullopt, 
+                packet_id, std::nullopt);
+        }
+    }
+    } catch (data_packet_smaller_than_expected &e) {
+        session.send(std::make_unique<Packet<RJT>>(session_id, e._nr));
+    }
+
+    session.send(std::make_unique<Packet<RCVD>>(session_id));
+}
+
 int main(int argc, char *argv[]) {
     try {
     if (argc != 3) {

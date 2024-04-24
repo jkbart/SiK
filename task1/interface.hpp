@@ -28,9 +28,9 @@ public:
 
         p_cnt_t packet_number = 0;
         while (file.peek() != EOF) {
-            static std::vector<char> buffor(IO::MAX_DATA_SIZE);
+            static std::vector<char> buffor(IO::OPTIMAL_DATA_SIZE);
 
-            file.read(buffor.data(), IO::MAX_DATA_SIZE);
+            file.read(buffor.data(), IO::OPTIMAL_DATA_SIZE);
 
             if (file.gcount() == 0) {
                 throw std::runtime_error(
@@ -72,6 +72,7 @@ get_next_from_session<IO::Socket::UDP>(IO::Socket &socket,
     std::chrono::steady_clock::time_point to_begin) {
 
     while (true) {
+        try {
         sockaddr_in addr;
         auto reader = std::make_unique<IO::PacketReader<IO::Socket::UDP>>
             (socket, &addr, true, to_begin);
@@ -84,7 +85,12 @@ get_next_from_session<IO::Socket::UDP>(IO::Socket &socket,
             reader->mtb();
             return {std::move(reader), id};
         } else if (id == CONN) {
-            Packet<CONNRJT>(session_id).send(socket, &addr);
+            Packet<CONNRJT>(session_id)
+                .getSender(socket, &addr)
+                .send<IO::Socket::UDP>();
+        }
+        } catch (IO::packet_smaller_than_expected &e) {
+            // Incorrect packet, skipping
         }
     }
 }
@@ -189,7 +195,7 @@ public:
 
     void send(std::unique_ptr<PacketBase> packet) {
         DBG_printer("sending: ", *packet);
-        packet->send(_socket, &_addr);
+        packet->getSender(_socket, &_addr).send<connection>();
         _retransmit_cnt = MAX_RETRANSMITS;
         _last_msg = std::move(packet);
     }
@@ -229,141 +235,12 @@ public:
                     "id->", packet_to_string(_last_msg->getID()));
 
                 _retransmit_cnt--;
-                _last_msg->send(_socket, &_addr);
+                _last_msg->getSender(_socket, &_addr).send<connection>();
                 to_begin = std::chrono::steady_clock::now();
             }
         }
     }
 };
-
-template <protocol_t P>
-void server_handler(Session<P> &session, Packet<CONN> conn) {
-    session_t session_id = conn._session_id;
-    b_cnt_t bytes_left = conn._data_len;
-
-    session.send(
-        std::make_unique<Packet<CONNACC>>(session_id));
-
-    p_cnt_t packet_number = 0;
-
-    while (bytes_left > 0) {
-        auto [reader, packet_id] =
-            session.template get_next<CONN, DATA>(0, packet_number);
-
-        if (packet_id == DATA) {
-            Packet<DATA> data_packet(*reader);
-
-            if (data_packet._packet_number != packet_number) {
-                session.send(std::make_unique<Packet<RJT>>
-                        (session_id, data_packet._packet_number));
-
-                // throw std::runtime_error(
-                //     "Data packets not in order, expected:" +
-                //     std::to_string(packet_number) + ", received:" +
-                //     std::to_string(data_packet._packet_number));
-                throw unexpected_packet(DATA, packet_number, 
-                    DATA, data_packet._packet_number);
-            } else if (bytes_left < data_packet._packet_byte_cnt) {
-                session.send(
-                    std::make_unique<Packet<RJT>>
-                        (session_id, data_packet._packet_number));
-
-                throw std::runtime_error(
-                    "Received to much bytes: left to read:" +
-                    std::to_string(conn._data_len) + ", received:" +
-                    std::to_string(conn._data_len - bytes_left));
-            }
-
-            std::cout.write(
-                data_packet._data.data(), data_packet._data.size());
-            std::cout << std::flush;
-
-            bytes_left -= data_packet._packet_byte_cnt;
-            packet_number++;
-
-            if constexpr (retransmits<P>()) {
-                if (bytes_left != 0) {
-                    session.send(
-                        std::make_unique<Packet<ACC>>
-                            (session_id, data_packet._packet_number));
-                }
-            }
-        } else {
-            throw unexpected_packet(DATA, std::nullopt, 
-                packet_id, std::nullopt);
-        }
-    }
-
-    session.send(std::make_unique<Packet<RCVD>>(session_id));
-}
-
-
-
-template <protocol_t P>
-void client_handler(Session<P> &session, int64_t session_id, File &file) {
-    DBG_printer("Sending file of size: ", file.get_size());
-
-    session.send(
-        std::make_unique<Packet<CONN>>(session_id, P, file.get_size()));
-
-    auto [reader, id] = session.get_next();
-
-    if (id == CONNRJT) {
-        return;
-    }
-
-    if (id != CONNACC) {
-        throw unexpected_packet(CONNACC, std::nullopt, id, std::nullopt);
-    }
-
-    Packet<CONNACC> connacc(*reader);
-
-    p_cnt_t packet_number = 0;
-    while (file.get_size() != 0) {
-        // std::this_thread::sleep_for(std::chrono::milliseconds(1000 * 5));
-        if constexpr (retransmits<P>()) {
-            if (packet_number != 0) {
-                auto [reader_2, id_2] = 
-                    session.template get_next<CONNACC, ACC>
-                        (0, packet_number - 1);
-                if (id_2 == ACC) {
-                    Packet<ACC> acc(*reader_2);
-                    if (acc._packet_number != packet_number - 1) {
-                        throw unexpected_packet(ACC, packet_number - 1,
-                            ACC, acc._packet_number);
-                    }
-                } else if (id_2 == RJT) {
-                    Packet<RJT> rjt(*reader_2);
-                    if (rjt._packet_number != packet_number - 1) {
-                        throw unexpected_packet(RJT, packet_number - 1,
-                            RJT, rjt._packet_number);
-                    } else {
-                        throw rejected_data(packet_number - 1);
-                    }
-                } else {
-                    throw unexpected_packet(RJT, std::nullopt, 
-                        id_2, std::nullopt);
-                }
-            }
-        }
-
-        static std::vector<char> buffor(IO::MAX_DATA_SIZE);
-
-        session.send(std::make_unique<Packet<DATA>>(file.get_next_packet()));
-        packet_number++;
-    }
-
-    auto [reader_2, id_2] = 
-        session.template get_next<CONNACC, ACC>(0, packet_number);
-
-    if (id_2 == RCVD) {
-        return;
-    } else if (id_2 == RJT) {
-        throw std::runtime_error("Data packet rejected");
-    } else {
-        throw unexpected_packet(RCVD, std::nullopt, id, std::nullopt);
-    }
-}
-}
+} /* PPCB namespace */
 
 #endif /* INTERFACE_HPP */
