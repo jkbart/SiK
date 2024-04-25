@@ -51,11 +51,9 @@ void server_handler(Session<P> &session, Packet<CONN> conn) {
             packet_number++;
 
             if constexpr (retransmits<P>()) {
-                if (bytes_left != 0) {
-                    session.send(
-                        std::make_unique<Packet<ACC>>
-                            (session_id, data_packet._packet_number));
-                }
+                session.send(
+                    std::make_unique<Packet<ACC>>
+                        (session_id, data_packet._packet_number));
             }
         } else {
             throw unexpected_packet(DATA, std::nullopt, 
@@ -150,7 +148,7 @@ int main(int argc, char *argv[]) {
                     Packet<RJT>(data._session_id, data._packet_number)
                         .getSender(socket, &client_address)
                         .send<IO::Socket::UDP>();
-                        
+
                     DBG_printer("Wating server rejected packet data nr:", 
                         data._packet_number);
                 }

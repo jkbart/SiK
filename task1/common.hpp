@@ -141,7 +141,7 @@ class rejected_data : public std::exception {
 
   public:
     rejected_data(p_cnt_t packet_number) : _packet_number(packet_number),
-          _msg("Data packet " + std::to_string(packet_number) + " rejected") {}
+          _msg("Data packet nr: " + std::to_string(packet_number) + " rejected") {}
 
     const char *what() const throw() { return _msg.c_str(); }
 };
