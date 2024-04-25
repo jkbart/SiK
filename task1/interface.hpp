@@ -88,6 +88,11 @@ get_next_from_session<IO::Socket::UDP>(IO::Socket &socket,
             Packet<CONNRJT>(session_id)
                 .getSender(socket, &addr)
                 .send<IO::Socket::UDP>();
+        } else if (id == DATA) {
+            Packet<DATA> data(*reader);
+            Packet<RJT>(session_id, data._packet_number)
+                .getSender(socket, &addr)
+                .send<IO::Socket::UDP>();
         }
         } catch (IO::packet_smaller_than_expected &e) {
             // Incorrect packet, skipping

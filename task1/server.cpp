@@ -102,8 +102,10 @@ int main(int argc, char *argv[]) {
             sockaddr_in client_address;
 
             socket.resetRecvTimeout();
+
+            socklen_t address_length = sizeof(client_address);
             IO::Socket client_socket(accept(
-                (int)socket, (sockaddr *)&client_address, &IO::address_length));
+                (int)socket, (sockaddr *)&client_address, &address_length));
 
             DBG_printer("connected via tcp protocol");
 
@@ -143,8 +145,17 @@ int main(int argc, char *argv[]) {
                 packet_to_string(id));
 
             if (id != CONN) {
+                if (id == DATA) {
+                    Packet<DATA> data(reader);
+                    Packet<RJT>(data._session_id, data._packet_number)
+                        .getSender(socket, &client_address)
+                        .send<IO::Socket::UDP>();
+                        
+                    DBG_printer("Wating server rejected packet data nr:", 
+                        data._packet_number);
+                }
                 continue;
-            }
+            } 
 
             reader.mtb();
             Packet<CONN> conn(reader);

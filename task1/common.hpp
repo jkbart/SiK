@@ -136,8 +136,9 @@ class unexpected_packet : public std::exception {
 
 class rejected_data : public std::exception {
   private:
-    std::string _msg;
     p_cnt_t _packet_number;
+    std::string _msg;
+
   public:
     rejected_data(p_cnt_t packet_number) : _packet_number(packet_number),
           _msg("Data packet " + std::to_string(packet_number) + " rejected") {}
@@ -152,8 +153,8 @@ class data_packet_smaller_than_expected : public std::exception {
   public:
     const int _nr;
     data_packet_smaller_than_expected(int nr)
-        : _nr(nr), _msg("Data packet number" + 
-            std::to_string(_nr) + " has less bytes than expected") {}
+        : _msg("Data packet number " + 
+            std::to_string(nr) + " has less bytes than expected"), _nr(nr) {}
     const char *what() const throw() { return _msg.c_str(); }
 };
 
@@ -166,12 +167,17 @@ session_t session_id_generate() {
 
 // Packet types classes.
 class PacketBase {
+private:
+    session_t read_session_from_begining(IO::PacketReaderBase &reader) {
+        reader.mtb();
+        return std::get<1>(reader.readGeneric<packet_type_t, session_t>());
+    }
   public:
     const session_t _session_id;
 
     PacketBase(session_t session_id) : _session_id(session_id) {}
     PacketBase(IO::PacketReaderBase &reader) 
-    : _session_id(std::get<1>(reader.readGeneric<packet_type_t, session_t>())) 
+    : _session_id(read_session_from_begining(reader)) 
     {}
 
     void fillSender(IO::PacketSender &sender) const {
@@ -292,10 +298,11 @@ template <> class Packet<DATA> : public PacketOrderedBase {
 
   public:
     Packet(session_t session_id, p_cnt_t packet_number,
-                 b_cnt_t packet_byte_cnt, void *data)
+                 b_cnt_t packet_byte_cnt, char *data)
         : PacketOrderedBase(session_id, packet_number),
-          _packet_byte_cnt(packet_byte_cnt), _data(packet_byte_cnt) {
-        std::memcpy((void *)_data.data(), data, packet_byte_cnt);
+          _packet_byte_cnt(packet_byte_cnt), 
+          _data(data, data + packet_byte_cnt) {
+        // std::memcpy((void *)_data.data(), data, packet_byte_cnt);
     }
     Packet(session_t session_id, p_cnt_t packet_number,
                  b_cnt_t packet_byte_cnt, std::vector<char> data)
@@ -311,7 +318,7 @@ template <> class Packet<DATA> : public PacketOrderedBase {
         IO::PacketSender sender(socket, receiver);
         PacketOrderedBase::fillSender(sender);
         sender.add_var<b_cnt_t>(to_net(_packet_byte_cnt));
-        sender.add_data((char *)_data.data(), _data.size());
+        sender.add_data(_data.data(), _data.size());
         return sender;
     }
 

@@ -40,8 +40,6 @@ constexpr int MAX_UDP_PACKET_SIZE = 65'535;
 constexpr int MAX_DATA_SIZE = 64'000;
 constexpr int OPTIMAL_DATA_SIZE = 1400; // defualt MTU size is 1500
 
-socklen_t address_length = (socklen_t)sizeof(sockaddr_in);
-
 class timeout_error : public std::exception {
   private:
     int _fd;
@@ -125,7 +123,7 @@ class Socket {
         }
     }
 
-    void setRecvTimeout(int millis) {
+    void setRecvTimeout(int64_t millis) {
         timeval timeout;
         timeout.tv_sec = millis / 1000;
         timeout.tv_usec = (millis % 1000) * 1000;
@@ -216,9 +214,9 @@ template <Socket::connection_t C> class PacketReader;
 template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
   private:
     Socket &_socket;
-    std::chrono::steady_clock::time_point _timeout_begin;
     std::vector<char> _buff;
     ssize_t _next_byte;
+    std::chrono::steady_clock::time_point _timeout_begin;
     bool _needs_timeout;
 
   public:
@@ -231,7 +229,7 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
 
     void readn(void *buff, ssize_t n) {
         if (_needs_timeout) {
-            int timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+            int64_t timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - _timeout_begin)
                               .count();
             if (MAX_WAIT * 1000 - timeout <= 0) {
@@ -250,9 +248,10 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
         if (0 < to_read) {
             _buff.resize(old_buff_size + to_read);
 
+
             ssize_t ret =
                 recvfrom(_socket, &_buff[old_buff_size], to_read, 
-                         MSG_WAITALL, NULL, &address_length);
+                         MSG_WAITALL, NULL, NULL);
 
             if (_needs_timeout) {
                 _socket.resetRecvTimeout();
@@ -293,7 +292,7 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
             std::chrono::steady_clock::now())
         : _socket{socket}, _buff(MAX_UDP_PACKET_SIZE) {
         if (needs_timeout) {
-            int timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+            int64_t timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - timeout_begin)
                               .count();
             if (MAX_WAIT * 1000 - timeout <= 0) {
@@ -305,6 +304,8 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
             _socket.resetRecvTimeout();
         }
 
+
+        socklen_t address_length = sizeof(addr);
         ssize_t ret = recvfrom(_socket, _buff.data(), MAX_UDP_PACKET_SIZE,
                            MSG_WAITALL, (sockaddr *)addr, &address_length);
 
@@ -350,8 +351,7 @@ void send_n<Socket::TCP>
     ssize_t sent = 0;
     while (sent != len) {
         ssize_t ret = sendto((int)socket, buffor + sent, len - sent, 0,
-                         (sockaddr *)addr, address_length);
-        DBG_printer("SENDTO returned", ret, "of", len - sent);
+                         (sockaddr *)addr, (socklen_t) sizeof(addr));
 
         if (ret <= 0) {
             throw std::runtime_error(
@@ -372,12 +372,10 @@ void send_n<Socket::UDP>
             std::to_string(MAX_UDP_PACKET_SIZE));
     }
     ssize_t ret = sendto((int)socket, buffor, len, 0,
-                         (sockaddr *)addr, address_length);
-
-    // DBG_printer("SENDTO returned", ret, "of", len);
+                         (sockaddr *)addr, (socklen_t) sizeof(sockaddr));
 
     if (ret <= 0) {
-        throw std::runtime_error(std::string("Failed to send packet: ") +
+        throw std::runtime_error(std::string("UDP failed to send packet: ") +
                                      std::strerror(errno));
     }
 
@@ -412,7 +410,7 @@ class PacketSender {
     PacketSender(Socket &socket, sockaddr_in *addr)
         : _socket(socket), _buffor(0), _addr(addr) {}
 
-    PacketSender &add_data(void *data, size_t len) {
+    PacketSender &add_data(const void *data, size_t len) {
         ssize_t offset = _buffor.size();
         _buffor.resize(offset + len);
         std::memcpy(_buffor.data() + offset, data, len);
