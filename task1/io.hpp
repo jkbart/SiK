@@ -13,17 +13,17 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
-#include <iostream>
-#include <algorithm>
-#include <tuple>
 
 #include "debug.hpp"
 using namespace DEBUG_NS;
@@ -46,8 +46,8 @@ class timeout_error : public std::exception {
 
   public:
     timeout_error(int fd)
-        : _fd(fd), _msg("Socket on descriptor " + 
-            std::to_string(_fd) + " timed out") {}
+        : _fd(fd),
+          _msg("Socket on descriptor " + std::to_string(_fd) + " timed out") {}
     const char *what() const throw() { return _msg.c_str(); }
 };
 
@@ -58,11 +58,10 @@ class packet_smaller_than_expected : public std::exception {
 
   public:
     packet_smaller_than_expected(int fd)
-        : _fd(fd), _msg("Packet readed from descriptor " + 
-            std::to_string(_fd) + " has less bytes than expected") {}
+        : _fd(fd), _msg("Packet readed from descriptor " + std::to_string(_fd) +
+                        " has less bytes than expected") {}
     const char *what() const throw() { return _msg.c_str(); }
 };
-
 
 // Socket wrapper for easier interface.
 class Socket {
@@ -90,7 +89,7 @@ class Socket {
     std::shared_ptr<int> _socket_fd{new int(-1), [](int *x) {
                                         if (*x == -1)
                                             return;
-                                        
+
                                         close(*x);
                                         delete x;
                                     }};
@@ -113,7 +112,8 @@ class Socket {
 
     int get_fd() const { return *_socket_fd; }
 
-    void setsockopt(sockopt_t opt, const void *option_value, socklen_t opt_len) {
+    void setsockopt(sockopt_t opt, const void *option_value,
+                    socklen_t opt_len) {
         int ret =
             ::setsockopt(*_socket_fd, SOL_SOCKET, opt, option_value, opt_len);
         if (ret == -1) {
@@ -137,13 +137,9 @@ class Socket {
         setsockopt(SNDTIMEO, &timeout, sizeof(timeval));
     }
 
-    void resetRecvTimeout() {
-        setRecvTimeout(0);
-    }
+    void resetRecvTimeout() { setRecvTimeout(0); }
 
-    void resetSendTimeout() {
-        setSendTimeout(0);
-    }
+    void resetSendTimeout() { setSendTimeout(0); }
 
     operator int() const { return *_socket_fd; }
 
@@ -172,15 +168,13 @@ class Socket {
 };
 
 // Helper functions for template pack parameter operations.
-template<class Arg>
-Arg read_single_var(char *buffor) {
+template <class Arg> Arg read_single_var(char *buffor) {
     Arg var;
     std::memcpy(&var, buffor, sizeof(Arg));
     return var;
 }
 
-template<class Arg1, class Arg2>
-Arg1& increment(Arg1& arg1, Arg2 arg2) {
+template <class Arg1, class Arg2> Arg1 &increment(Arg1 &arg1, Arg2 arg2) {
     arg1 += arg2;
     return arg1;
 }
@@ -192,8 +186,8 @@ class PacketReaderBase {
     virtual void readn(void *buff, ssize_t n) = 0;
 
     // Move packet buffor pointer to begining.
-    virtual PacketReaderBase& mtb() = 0;
-    
+    virtual PacketReaderBase &mtb() = 0;
+
     // Returns vector with n next bytes.
     std::vector<char> readn(ssize_t n) {
         std::vector<char> buffor(n);
@@ -207,7 +201,7 @@ class PacketReaderBase {
         auto buffor = readn(len);
 
         char *offset = buffor.data();
-        return {read_single_var<Args>(increment(offset, sizeof(Args)) - 
+        return {read_single_var<Args>(increment(offset, sizeof(Args)) -
                                       sizeof(Args))...};
     }
 
@@ -225,19 +219,18 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
     bool _needs_timeout;
 
   public:
-    PacketReader(
-        Socket &socket, sockaddr_in *, bool needs_timeout = true,
-        std::chrono::steady_clock::time_point timeout_begin =
-            std::chrono::steady_clock::now())
+    PacketReader(Socket &socket, sockaddr_in *, bool needs_timeout = true,
+                 std::chrono::steady_clock::time_point timeout_begin =
+                     std::chrono::steady_clock::now())
         : _socket{socket}, _buff(0), _next_byte(0),
           _timeout_begin(timeout_begin), _needs_timeout{needs_timeout} {}
 
     void readn(void *buff, ssize_t n) {
         if (_needs_timeout) {
-            int64_t timeout = 
+            int64_t timeout =
                 std::chrono::duration_cast<std::chrono::milliseconds>(
-                              std::chrono::steady_clock::now() - _timeout_begin)
-                              .count();
+                    std::chrono::steady_clock::now() - _timeout_begin)
+                    .count();
             if (MAX_WAIT * 1000 - timeout <= 0) {
                 throw timeout_error((int)_socket);
             }
@@ -253,10 +246,8 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
         if (0 < to_read) {
             _buff.resize(old_buff_size + to_read);
 
-
-            ssize_t ret =
-                recvfrom(_socket, &_buff[old_buff_size], to_read, 
-                         MSG_WAITALL, NULL, NULL);
+            ssize_t ret = recvfrom(_socket, &_buff[old_buff_size], to_read,
+                                   MSG_WAITALL, NULL, NULL);
 
             if (_needs_timeout) {
                 _socket.resetRecvTimeout();
@@ -268,7 +259,8 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
             if (ret == -1) {
                 _buff.resize(old_buff_size + ret);
                 throw std::runtime_error(
-                    std::string("Failed to read packet (tcp) (recvfrom error): ") +
+                    std::string(
+                        "Failed to read packet (tcp) (recvfrom error): ") +
                     std::strerror(errno));
             } else if (ret != to_read) {
                 _buff.resize(old_buff_size + ret);
@@ -280,7 +272,7 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
         _next_byte += n;
     }
 
-    PacketReaderBase& mtb() {
+    PacketReaderBase &mtb() {
         _next_byte = 0;
         return *this;
     }
@@ -293,16 +285,15 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
     ssize_t _bytes_readed{0};
 
   public:
-    PacketReader(
-        Socket &socket, sockaddr_in *addr, bool needs_timeout = true,
-        std::chrono::steady_clock::time_point timeout_begin =
-            std::chrono::steady_clock::now())
+    PacketReader(Socket &socket, sockaddr_in *addr, bool needs_timeout = true,
+                 std::chrono::steady_clock::time_point timeout_begin =
+                     std::chrono::steady_clock::now())
         : _socket{socket}, _buff(MAX_UDP_PACKET_SIZE) {
         if (needs_timeout) {
-            int64_t timeout = 
+            int64_t timeout =
                 std::chrono::duration_cast<std::chrono::milliseconds>(
-                              std::chrono::steady_clock::now() - timeout_begin)
-                              .count();
+                    std::chrono::steady_clock::now() - timeout_begin)
+                    .count();
             if (MAX_WAIT * 1000 - timeout <= 0) {
                 throw timeout_error((int)_socket);
             }
@@ -312,10 +303,9 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
             _socket.resetRecvTimeout();
         }
 
-
         socklen_t address_length = sizeof(addr);
         ssize_t ret = recvfrom(_socket, _buff.data(), MAX_UDP_PACKET_SIZE,
-                           MSG_WAITALL, (sockaddr *)addr, &address_length);
+                               MSG_WAITALL, (sockaddr *)addr, &address_length);
 
         if (needs_timeout) {
             _socket.resetRecvTimeout();
@@ -342,23 +332,23 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
         }
     }
 
-    PacketReaderBase& mtb() {
+    PacketReaderBase &mtb() {
         _bytes_readed = 0;
         return *this;
     }
 };
 
 // Base function used to send data over socket.
-template<Socket::connection_t C>
+template <Socket::connection_t C>
 void send_n(Socket &socket, sockaddr_in *addr, char *buffor, ssize_t len);
 
-template<>
-void send_n<Socket::TCP>
-    (Socket &socket, sockaddr_in *addr, char *buffor, ssize_t len) {
+template <>
+void send_n<Socket::TCP>(Socket &socket, sockaddr_in *addr, char *buffor,
+                         ssize_t len) {
     ssize_t sent = 0;
     while (sent != len) {
         ssize_t ret = sendto((int)socket, buffor + sent, len - sent, 0,
-                         (sockaddr *)addr, (socklen_t) sizeof(addr));
+                             (sockaddr *)addr, (socklen_t)sizeof(addr));
 
         if (ret <= 0) {
             throw std::runtime_error(
@@ -369,21 +359,21 @@ void send_n<Socket::TCP>
     }
 }
 
-template<>
-void send_n<Socket::UDP>
-    (Socket &socket, sockaddr_in *addr, char *buffor, ssize_t len) {
+template <>
+void send_n<Socket::UDP>(Socket &socket, sockaddr_in *addr, char *buffor,
+                         ssize_t len) {
     if (len > MAX_UDP_PACKET_SIZE) {
         throw std::runtime_error(
-            std::string("UDP tried to send more than max packet size bytes: ") + 
-            std::to_string(len) + std::string("/") + 
+            std::string("UDP tried to send more than max packet size bytes: ") +
+            std::to_string(len) + std::string("/") +
             std::to_string(MAX_UDP_PACKET_SIZE));
     }
-    ssize_t ret = sendto((int)socket, buffor, len, 0,
-                         (sockaddr *)addr, (socklen_t) sizeof(sockaddr));
+    ssize_t ret = sendto((int)socket, buffor, len, 0, (sockaddr *)addr,
+                         (socklen_t)sizeof(sockaddr));
 
     if (ret <= 0) {
         throw std::runtime_error(std::string("UDP failed to send packet: ") +
-                                     std::strerror(errno));
+                                 std::strerror(errno));
     }
 
     if (ret != len) {
@@ -398,9 +388,9 @@ void send_v(Socket &socket, sockaddr_in *addr, Args... args) {
     ssize_t len = (sizeof(Args) + ... + 0);
     std::vector<char> buffor(len);
     ssize_t offset = 0;
-    ((std::memcpy((
-        buffor.data() + increment(offset, sizeof(Args)) - sizeof(Args)),
-        &args, sizeof(Args))),
+    ((std::memcpy(
+         (buffor.data() + increment(offset, sizeof(Args)) - sizeof(Args)),
+         &args, sizeof(Args))),
      ...);
 
     send_n<C>(socket, addr, buffor.data(), len);
@@ -431,16 +421,17 @@ class PacketSender {
 
         _buffor.resize(offset_old + len);
         ssize_t offset = 0;
-        ((std::memcpy(
-            _buffor.data() + offset_old +  increment(offset, sizeof(Args)) -
-            sizeof(Args), &args, sizeof(Args))),
+        ((std::memcpy(_buffor.data() + offset_old +
+                          increment(offset, sizeof(Args)) - sizeof(Args),
+                      &args, sizeof(Args))),
          ...);
 
         return *this;
     }
 
-    template<Socket::connection_t C>
-    void send() { send_n<C>(_socket, _addr, _buffor.data(), _buffor.size()); }
+    template <Socket::connection_t C> void send() {
+        send_n<C>(_socket, _addr, _buffor.data(), _buffor.size());
+    }
 };
 
 // Functions from labs with added exceptions.
@@ -449,10 +440,10 @@ uint16_t read_port(char const *string) {
     errno = 0;
     unsigned long port = strtoul(string, &endptr, 10);
     if (errno != 0 || *endptr != 0 || port > UINT16_MAX) {
-        throw std::runtime_error(std::string(string) + 
+        throw std::runtime_error(std::string(string) +
                                  std::string(" is not a port valid number"));
     }
-    return (uint16_t) port;
+    return (uint16_t)port;
 }
 
 size_t read_size(char const *string) {
@@ -460,7 +451,7 @@ size_t read_size(char const *string) {
     errno = 0;
     unsigned long long number = strtoull(string, &endptr, 10);
     if (errno != 0 || *endptr != 0 || number > SIZE_MAX) {
-        throw std::runtime_error(std::string(string) + 
+        throw std::runtime_error(std::string(string) +
                                  std::string(" is not a valid number"));
     }
     return number;
@@ -476,14 +467,14 @@ struct sockaddr_in get_server_address(char const *host, uint16_t port) {
     struct addrinfo *address_result;
     int errcode = getaddrinfo(host, NULL, &hints, &address_result);
     if (errcode != 0) {
-        throw std::runtime_error(std::string("getaddrinfo: ") + 
+        throw std::runtime_error(std::string("getaddrinfo: ") +
                                  std::string(gai_strerror(errcode)));
     }
 
     struct sockaddr_in send_address;
-    send_address.sin_family = AF_INET;   // IPv4
-    send_address.sin_addr.s_addr =       // IP address
-            ((struct sockaddr_in *) (address_result->ai_addr))->sin_addr.s_addr;
+    send_address.sin_family = AF_INET; // IPv4
+    send_address.sin_addr.s_addr =     // IP address
+        ((struct sockaddr_in *)(address_result->ai_addr))->sin_addr.s_addr;
     send_address.sin_port = htons(port); // port from the command line
 
     freeaddrinfo(address_result);

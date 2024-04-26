@@ -1,7 +1,7 @@
 #include "common.hpp"
-#include "io.hpp"
-#include "interface.hpp"
 #include "debug.hpp"
+#include "interface.hpp"
+#include "io.hpp"
 
 #include <iostream>
 #include <string>
@@ -16,53 +16,50 @@ void server_handler(Session<P> &session, Packet<CONN> conn) {
     session_t session_id = conn._session_id;
     b_cnt_t bytes_left = conn._data_len;
 
-    session.send(
-        std::make_unique<Packet<CONNACC>>(session_id));
+    session.send(std::make_unique<Packet<CONNACC>>(session_id));
 
     p_cnt_t packet_number = 0;
 
     try {
-    while (bytes_left > 0) {
-        auto [reader, packet_id] =
-            session.template get_next<CONN, DATA>(0, packet_number);
+        while (bytes_left > 0) {
+            auto [reader, packet_id] =
+                session.template get_next<CONN, DATA>(0, packet_number);
 
-        if (packet_id == DATA) {
-            Packet<DATA> data_packet(*reader);
+            if (packet_id == DATA) {
+                Packet<DATA> data_packet(*reader);
 
-            if (data_packet._packet_number != packet_number) {
-                session.send(std::make_unique<Packet<RJT>>
-                        (session_id, data_packet._packet_number));
-                throw unexpected_packet(DATA, packet_number, 
-                    DATA, data_packet._packet_number);
-            } else if (bytes_left < data_packet._packet_byte_cnt) {
-                session.send(
-                    std::make_unique<Packet<RJT>>
-                        (session_id, data_packet._packet_number));
+                if (data_packet._packet_number != packet_number) {
+                    session.send(std::make_unique<Packet<RJT>>(
+                        session_id, data_packet._packet_number));
+                    throw unexpected_packet(DATA, packet_number, DATA,
+                                            data_packet._packet_number);
+                } else if (bytes_left < data_packet._packet_byte_cnt) {
+                    session.send(std::make_unique<Packet<RJT>>(
+                        session_id, data_packet._packet_number));
 
-                throw std::runtime_error(
-                    "Received to much bytes: left to read:" +
-                    std::to_string(conn._data_len) + ", received:" +
-                    std::to_string(conn._data_len - bytes_left));
+                    throw std::runtime_error(
+                        "Received to much bytes: left to read:" +
+                        std::to_string(conn._data_len) + ", received:" +
+                        std::to_string(conn._data_len - bytes_left));
+                }
+
+                std::cout.write(data_packet._data.data(),
+                                data_packet._data.size());
+                std::cout << std::flush;
+
+                bytes_left -= data_packet._packet_byte_cnt;
+                packet_number++;
+
+                // Retransmit part in if constexpr to avoid copy pasting code.
+                if constexpr (retransmits<P>()) {
+                    session.send(std::make_unique<Packet<ACC>>(
+                        session_id, data_packet._packet_number));
+                }
+            } else {
+                throw unexpected_packet(DATA, std::nullopt, packet_id,
+                                        std::nullopt);
             }
-
-            std::cout.write(
-                data_packet._data.data(), data_packet._data.size());
-            std::cout << std::flush;
-
-            bytes_left -= data_packet._packet_byte_cnt;
-            packet_number++;
-
-            // Retransmit part in if constexpr to avoid copy pasting code.
-            if constexpr (retransmits<P>()) {
-                session.send(
-                    std::make_unique<Packet<ACC>>
-                        (session_id, data_packet._packet_number));
-            }
-        } else {
-            throw unexpected_packet(DATA, std::nullopt, 
-                packet_id, std::nullopt);
         }
-    }
     } catch (data_packet_wrong_format &e) {
         session.send(std::make_unique<Packet<RJT>>(session_id, e._nr));
         throw e;
@@ -73,120 +70,126 @@ void server_handler(Session<P> &session, Packet<CONN> conn) {
 
 int main(int argc, char *argv[]) {
     try {
-    signal(SIGPIPE, SIG_IGN);
+        signal(SIGPIPE, SIG_IGN);
 
-    if (argc != 3) {
-        throw std::runtime_error("Usage: <protocol> <port>");
-    }
-
-    uint16_t port = IO::read_port(argv[2]);
-    std::string s_protocol(argv[1]);
-
-    if (s_protocol != "tcp" && s_protocol != "udp") {
-        throw std::runtime_error("Unknown protocol name: " + s_protocol);
-    }
-
-    if (s_protocol == std::string("tcp")) {
-        static constexpr int QUEUE_LENGTH = 10;
-        IO::Socket socket(IO::Socket::TCP);
-        socket.bind(port);
-
-        if (listen((int)(socket), QUEUE_LENGTH) < 0) {
-            throw std::runtime_error(
-                std::string("Couldn't listen on socket: ") +
-                std::strerror(errno));
+        if (argc != 3) {
+            throw std::runtime_error("Usage: <protocol> <port>");
         }
 
+        uint16_t port = IO::read_port(argv[2]);
+        std::string s_protocol(argv[1]);
 
-        while (true) {
-            sockaddr_in client_address;
+        if (s_protocol != "tcp" && s_protocol != "udp") {
+            throw std::runtime_error("Unknown protocol name: " + s_protocol);
+        }
 
-            socket.resetRecvTimeout();
+        if (s_protocol == std::string("tcp")) {
+            static constexpr int QUEUE_LENGTH = 10;
+            IO::Socket socket(IO::Socket::TCP);
+            socket.bind(port);
 
-            socklen_t address_length = sizeof(client_address);
-            IO::Socket client_socket(accept(
-                (int)socket, (sockaddr *)&client_address, &address_length));
-
-            DBG_printer("connected via tcp protocol");
-
-            try {
-            IO::PacketReader<IO::Socket::TCP> reader(client_socket, NULL);
-            auto [id] = reader.readGeneric<packet_type_t>();
-            if (id != CONN) {
-                throw unexpected_packet(CONN, std::nullopt, id, std::nullopt);
-            }
-
-            reader.mtb();
-            Packet<CONN> conn(reader);
-
-            if (conn._protocol != tcp) {
+            if (listen((int)(socket), QUEUE_LENGTH) < 0) {
                 throw std::runtime_error(
-                    "Unknown protocol: " + std::to_string(conn._protocol));
+                    std::string("Couldn't listen on socket: ") +
+                    std::strerror(errno));
             }
 
-            Session<tcp> session(
-                client_socket, client_address, conn._session_id, true);
+            while (true) {
+                sockaddr_in client_address;
 
-            server_handler(session, conn);
-            } catch (std::exception &e) {
-                std::cerr << "ERROR: [SINGLE CONNECTION] " << e.what() << "\n";
-            }
-        }
-    } else {
-        IO::Socket socket(IO::Socket::UDP);
-        socket.bind(port);
+                socket.resetRecvTimeout();
 
-        while (true) {
-            try {
-            sockaddr_in client_address;
+                socklen_t address_length = sizeof(client_address);
+                IO::Socket client_socket(accept(
+                    (int)socket, (sockaddr *)&client_address, &address_length));
 
-            socket.resetRecvTimeout();
-            IO::PacketReader<IO::Socket::UDP> reader(socket, &client_address,
-                                                     false);
-            socket.setRecvTimeout(MAX_WAIT * 1000);
+                DBG_printer("connected via tcp protocol");
 
-            auto [id] = reader.readGeneric<packet_type_t>();
+                try {
+                    IO::PacketReader<IO::Socket::TCP> reader(client_socket,
+                                                             NULL);
+                    auto [id] = reader.readGeneric<packet_type_t>();
+                    if (id != CONN) {
+                        throw unexpected_packet(CONN, std::nullopt, id,
+                                                std::nullopt);
+                    }
 
-            DBG_printer("UDP server waiting for client received id: ", 
-                packet_to_string(id));
+                    reader.mtb();
+                    Packet<CONN> conn(reader);
 
-            if (id != CONN) {
-                if (id == DATA) {
-                    Packet<DATA> data(reader);
-                    Packet<RJT>(data._session_id, data._packet_number)
-                        .getSender(socket, &client_address)
-                        .send<IO::Socket::UDP>();
+                    if (conn._protocol != tcp) {
+                        throw std::runtime_error(
+                            "Unknown protocol: " +
+                            std::to_string(conn._protocol));
+                    }
 
-                    DBG_printer("Wating server rejected packet data nr:", 
-                        data._packet_number);
+                    Session<tcp> session(client_socket, client_address,
+                                         conn._session_id, true);
+
+                    server_handler(session, conn);
+                } catch (std::exception &e) {
+                    std::cerr << "ERROR: [SINGLE CONNECTION] " << e.what()
+                              << "\n";
                 }
-                continue;
-            } 
-
-            reader.mtb();
-            Packet<CONN> conn(reader);
-
-            if (conn._protocol == udp) {
-                DBG_printer("connected via udp protocol");
-                Session<udp> session(
-                    socket, client_address, conn._session_id, true);
-
-                server_handler(session, conn);
-            } else if (conn._protocol == udpr) {
-                DBG_printer("connected via udpr protocol");
-                Session<udpr> session(
-                    socket, client_address, conn._session_id, true);
-
-                server_handler(session, conn);
-            } else {
-                throw std::runtime_error(
-                    "Unknown protocol: " + std::to_string(conn._protocol));
             }
-            } catch (std::exception &e) {
-                std::cerr << "ERROR: [SINGLE CONNECTION] " << e.what() << "\n";
+        } else {
+            IO::Socket socket(IO::Socket::UDP);
+            socket.bind(port);
+
+            while (true) {
+                try {
+                    sockaddr_in client_address;
+
+                    socket.resetRecvTimeout();
+                    IO::PacketReader<IO::Socket::UDP> reader(
+                        socket, &client_address, false);
+                    socket.setRecvTimeout(MAX_WAIT * 1000);
+
+                    auto [id] = reader.readGeneric<packet_type_t>();
+
+                    DBG_printer("UDP server waiting for client received id: ",
+                                packet_to_string(id));
+
+                    if (id != CONN) {
+                        if (id == DATA) {
+                            Packet<DATA> data(reader);
+                            Packet<RJT>(data._session_id, data._packet_number)
+                                .getSender(socket, &client_address)
+                                .send<IO::Socket::UDP>();
+
+                            DBG_printer(
+                                "Wating server rejected packet data nr:",
+                                data._packet_number);
+                        }
+                        continue;
+                    }
+
+                    reader.mtb();
+                    Packet<CONN> conn(reader);
+
+                    if (conn._protocol == udp) {
+                        DBG_printer("connected via udp protocol");
+                        Session<udp> session(socket, client_address,
+                                             conn._session_id, true);
+
+                        server_handler(session, conn);
+                    } else if (conn._protocol == udpr) {
+                        DBG_printer("connected via udpr protocol");
+                        Session<udpr> session(socket, client_address,
+                                              conn._session_id, true);
+
+                        server_handler(session, conn);
+                    } else {
+                        throw std::runtime_error(
+                            "Unknown protocol: " +
+                            std::to_string(conn._protocol));
+                    }
+                } catch (std::exception &e) {
+                    std::cerr << "ERROR: [SINGLE CONNECTION] " << e.what()
+                              << "\n";
+                }
             }
         }
-    } 
     } catch (std::exception &e) {
         std::cerr << "ERROR: [FATAL] " << e.what() << "\n";
     }
