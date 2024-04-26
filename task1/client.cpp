@@ -5,6 +5,9 @@
 
 #include <iostream>
 #include <string>
+#include <memory>
+
+#include <signal.h>
 
 using namespace PPCB;
 using namespace DEBUG_NS;
@@ -31,37 +34,33 @@ void client_handler(Session<P> &session, int64_t session_id, File &file) {
 
     p_cnt_t packet_number = 0;
     while (file.get_size() != 0) {
-        // std::this_thread::sleep_for(std::chrono::milliseconds(1000 * 5));
-        if constexpr (retransmits<P>()) {
-            if (packet_number != 0) {
-                auto [reader_2, id_2] = 
-                    session.template get_next<CONNACC, ACC>
-                        (0, packet_number - 1);
-                if (id_2 == ACC) {
-                    Packet<ACC> acc(*reader_2);
-                    if (acc._packet_number != packet_number - 1) {
-                        throw unexpected_packet(ACC, packet_number - 1,
-                            ACC, acc._packet_number);
-                    }
-                } else if (id_2 == RJT) {
-                    Packet<RJT> rjt(*reader_2);
-                    if (rjt._packet_number != packet_number - 1) {
-                        throw unexpected_packet(RJT, packet_number - 1,
-                            RJT, rjt._packet_number);
-                    } else {
-                        throw rejected_data(packet_number - 1);
-                    }
-                } else {
-                    throw unexpected_packet(RJT, std::nullopt, 
-                        id_2, std::nullopt);
-                }
-            }
-        }
-
-        static std::vector<char> buffor(IO::MAX_DATA_SIZE);
-
+        // Included retransmit part to avoid copy pasting code.
         session.send(std::make_unique<Packet<DATA>>(file.get_next_packet()));
         packet_number++;
+
+        if constexpr (retransmits<P>()) {
+            auto [reader_2, id_2] = 
+                session.template get_next<CONNACC, ACC>
+                    (0, packet_number - 1);
+            if (id_2 == ACC) {
+                Packet<ACC> acc(*reader_2);
+                if (acc._packet_number != packet_number - 1) {
+                    throw unexpected_packet(ACC, packet_number - 1,
+                        ACC, acc._packet_number);
+                }
+            } else if (id_2 == RJT) {
+                Packet<RJT> rjt(*reader_2);
+                if (rjt._packet_number != packet_number - 1) {
+                    throw unexpected_packet(RJT, packet_number - 1,
+                        RJT, rjt._packet_number);
+                } else {
+                    throw rejected_data(packet_number - 1);
+                }
+            } else {
+                throw unexpected_packet(RJT, std::nullopt, 
+                    id_2, std::nullopt);
+            }
+        }
     }
 
     auto [reader_2, id_2] = 
@@ -79,8 +78,10 @@ void client_handler(Session<P> &session, int64_t session_id, File &file) {
 
 int main(int argc, char *argv[]) {
     try {
-    if (argc != 5) {
-        throw std::runtime_error("Usage: <protocol> <ip> <port> <file>");
+    signal(SIGPIPE, SIG_IGN);
+
+    if (argc != 4) {
+        throw std::runtime_error("Usage: <protocol> <ip> <port>");
     }
 
     std::string s_protocol(argv[1]);
@@ -90,7 +91,7 @@ int main(int argc, char *argv[]) {
 
     session_t session_id = session_id_generate();
 
-    File file(argv[4], session_id);
+    File file(session_id);
 
     std::optional<Packet<CONN>> conn;
 
@@ -100,28 +101,30 @@ int main(int argc, char *argv[]) {
 
         if (connect((int)socket, (sockaddr *) &server_address,
                     (socklen_t) sizeof(server_address)) < 0) {
-            throw std::runtime_error("cannot connect to the server");
+            throw std::runtime_error("Cannot connect to the server");
         }
 
-        Session<tcp> session(socket, server_address, session_id);
+        Session<tcp> session(socket, server_address, session_id, false);
 
         client_handler(session, session_id, file);
     } else if (s_protocol == "udp") {
         IO::Socket socket(IO::Socket::UDP);
         DBG_printer("Connecting...");
 
-        Session<udp> session(socket, server_address, session_id);
+        Session<udp> session(socket, server_address, session_id, false);
 
         client_handler(session, session_id, file);
     } else if (s_protocol == "udpr") {
         IO::Socket socket(IO::Socket::UDP);
         DBG_printer("Connecting...");
 
-        Session<udpr> session(socket, server_address, session_id);
+        Session<udpr> session(socket, server_address, session_id, false);
 
         client_handler(session, session_id, file);
+    } else {
+        throw std::runtime_error("Unknown protocol: " + s_protocol);
     }
     } catch (std::exception &e) {
-        std::cerr << "[ERROR] " << e.what() << "\n";
+        std::cerr << "ERROR: " << e.what() << "\n";
     }
 }

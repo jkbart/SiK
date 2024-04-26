@@ -6,6 +6,8 @@
 #include <iostream>
 #include <string>
 
+#include <signal.h>
+
 using namespace PPCB;
 using namespace DEBUG_NS;
 
@@ -50,6 +52,7 @@ void server_handler(Session<P> &session, Packet<CONN> conn) {
             bytes_left -= data_packet._packet_byte_cnt;
             packet_number++;
 
+            // Retransmit part in if constexpr to avoid copy pasting code.
             if constexpr (retransmits<P>()) {
                 session.send(
                     std::make_unique<Packet<ACC>>
@@ -60,8 +63,9 @@ void server_handler(Session<P> &session, Packet<CONN> conn) {
                 packet_id, std::nullopt);
         }
     }
-    } catch (data_packet_smaller_than_expected &e) {
+    } catch (data_packet_wrong_format &e) {
         session.send(std::make_unique<Packet<RJT>>(session_id, e._nr));
+        throw e;
     }
 
     session.send(std::make_unique<Packet<RCVD>>(session_id));
@@ -69,22 +73,21 @@ void server_handler(Session<P> &session, Packet<CONN> conn) {
 
 int main(int argc, char *argv[]) {
     try {
+    signal(SIGPIPE, SIG_IGN);
+
     if (argc != 3) {
-        throw std::runtime_error("Usage: <port> <protocol>");
+        throw std::runtime_error("Usage: <protocol> <port>");
     }
 
-    uint16_t port = IO::read_port(argv[1]);
-    std::string s_protocol(argv[2]);
+    uint16_t port = IO::read_port(argv[2]);
+    std::string s_protocol(argv[1]);
 
-    if (s_protocol != "tcp" &&
-        s_protocol != "udp") {
-        throw 
-            std::runtime_error("Unknown protocol name: " + s_protocol);
+    if (s_protocol != "tcp" && s_protocol != "udp") {
+        throw std::runtime_error("Unknown protocol name: " + s_protocol);
     }
 
     if (s_protocol == std::string("tcp")) {
-
-        static const int QUEUE_LENGTH = 10;
+        static constexpr int QUEUE_LENGTH = 10;
         IO::Socket socket(IO::Socket::TCP);
         socket.bind(port);
 
@@ -96,7 +99,6 @@ int main(int argc, char *argv[]) {
 
 
         while (true) {
-            try {
             sockaddr_in client_address;
 
             socket.resetRecvTimeout();
@@ -107,6 +109,7 @@ int main(int argc, char *argv[]) {
 
             DBG_printer("connected via tcp protocol");
 
+            try {
             IO::PacketReader<IO::Socket::TCP> reader(client_socket, NULL);
             auto [id] = reader.readGeneric<packet_type_t>();
             if (id != CONN) {
@@ -116,12 +119,17 @@ int main(int argc, char *argv[]) {
             reader.mtb();
             Packet<CONN> conn(reader);
 
+            if (conn._protocol != tcp) {
+                throw std::runtime_error(
+                    "Unknown protocol: " + std::to_string(conn._protocol));
+            }
+
             Session<tcp> session(
-                client_socket, client_address, conn._session_id);
+                client_socket, client_address, conn._session_id, true);
 
             server_handler(session, conn);
             } catch (std::exception &e) {
-                std::cerr << "[ERROR][SINGLE CONNECTION] " << e.what() << "\n";
+                std::cerr << "ERROR: [SINGLE CONNECTION] " << e.what() << "\n";
             }
         }
     } else {
@@ -161,13 +169,13 @@ int main(int argc, char *argv[]) {
             if (conn._protocol == udp) {
                 DBG_printer("connected via udp protocol");
                 Session<udp> session(
-                    socket, client_address, conn._session_id);
+                    socket, client_address, conn._session_id, true);
 
                 server_handler(session, conn);
             } else if (conn._protocol == udpr) {
                 DBG_printer("connected via udpr protocol");
                 Session<udpr> session(
-                    socket, client_address, conn._session_id);
+                    socket, client_address, conn._session_id, true);
 
                 server_handler(session, conn);
             } else {
@@ -175,11 +183,11 @@ int main(int argc, char *argv[]) {
                     "Unknown protocol: " + std::to_string(conn._protocol));
             }
             } catch (std::exception &e) {
-                std::cerr << "[ERROR][SINGLE CONNECTION] " << e.what() << "\n";
+                std::cerr << "ERROR: [SINGLE CONNECTION] " << e.what() << "\n";
             }
         }
     } 
     } catch (std::exception &e) {
-        std::cerr << "[ERROR][FATAL] " << e.what() << "\n";
+        std::cerr << "ERROR: [FATAL] " << e.what() << "\n";
     }
 }

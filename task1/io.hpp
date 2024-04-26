@@ -23,6 +23,7 @@
 #include <vector>
 #include <iostream>
 #include <algorithm>
+#include <tuple>
 
 #include "debug.hpp"
 using namespace DEBUG_NS;
@@ -37,8 +38,6 @@ bool operator==(const sockaddr_in &lhs, const sockaddr_in &rhs) {
 
 namespace IO {
 constexpr int MAX_UDP_PACKET_SIZE = 65'535;
-constexpr int MAX_DATA_SIZE = 64'000;
-constexpr int OPTIMAL_DATA_SIZE = 1400; // defualt MTU size is 1500
 
 class timeout_error : public std::exception {
   private:
@@ -68,6 +67,7 @@ class packet_smaller_than_expected : public std::exception {
 // Socket wrapper for easier interface.
 class Socket {
   public:
+    static constexpr int DEFAULT_SEND_TIMEOUT = 2 * MAX_WAIT;
     enum connection_t : int { TCP = SOCK_STREAM, UDP = SOCK_DGRAM };
 
     enum sockopt_t : int {
@@ -149,6 +149,7 @@ class Socket {
 
     Socket() = delete;
     // Variable order diffrent than in socket function!!
+    // (for deafult values)
     Socket(connection_t type, int domain = AF_INET, int protocol = 0) {
         *_socket_fd = socket(domain, type, protocol);
         if (*_socket_fd < 0) {
@@ -156,13 +157,17 @@ class Socket {
                                      std::strerror(errno));
         }
         setRecvTimeout(MAX_WAIT * 1000);
-        setSendTimeout(MAX_WAIT * 1000);
+        setSendTimeout(DEFAULT_SEND_TIMEOUT * 1000);
     }
 
     Socket(int fd) {
         *_socket_fd = fd;
+        if (fd < 0) {
+            throw std::runtime_error(std::string("Couldn't create socket: ") +
+                                     std::strerror(errno));
+        }
         setRecvTimeout(MAX_WAIT * 1000);
-        setSendTimeout(MAX_WAIT * 1000);
+        setSendTimeout(DEFAULT_SEND_TIMEOUT * 1000);
     }
 };
 
@@ -229,7 +234,8 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
 
     void readn(void *buff, ssize_t n) {
         if (_needs_timeout) {
-            int64_t timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+            int64_t timeout = 
+                std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - _timeout_begin)
                               .count();
             if (MAX_WAIT * 1000 - timeout <= 0) {
@@ -242,8 +248,7 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
         }
 
         ssize_t old_buff_size = _buff.size();
-        ssize_t to_read = 
-            std::max((n + _next_byte - old_buff_size), (ssize_t)0);
+        ssize_t to_read = n + _next_byte - old_buff_size;
 
         if (0 < to_read) {
             _buff.resize(old_buff_size + to_read);
@@ -260,12 +265,14 @@ template <> class PacketReader<Socket::TCP> : public PacketReaderBase {
                 }
             }
 
-            if (ret != to_read) {
+            if (ret == -1) {
                 _buff.resize(old_buff_size + ret);
                 throw std::runtime_error(
                     std::string("Failed to read packet (tcp) (recvfrom error): ") +
                     std::strerror(errno));
-                // throw packet_smaller_than_expected(_socket);
+            } else if (ret != to_read) {
+                _buff.resize(old_buff_size + ret);
+                throw timeout_error((int)_socket);
             }
         }
 
@@ -292,7 +299,8 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
             std::chrono::steady_clock::now())
         : _socket{socket}, _buff(MAX_UDP_PACKET_SIZE) {
         if (needs_timeout) {
-            int64_t timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+            int64_t timeout = 
+                std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() - timeout_begin)
                               .count();
             if (MAX_WAIT * 1000 - timeout <= 0) {
@@ -308,7 +316,6 @@ template <> class PacketReader<Socket::UDP> : public PacketReaderBase {
         socklen_t address_length = sizeof(addr);
         ssize_t ret = recvfrom(_socket, _buff.data(), MAX_UDP_PACKET_SIZE,
                            MSG_WAITALL, (sockaddr *)addr, &address_length);
-
 
         if (needs_timeout) {
             _socket.resetRecvTimeout();

@@ -34,6 +34,9 @@
 #include "protconst.h"
 
 namespace PPCB {
+constexpr int MAX_DATA_SIZE = 64'000;
+constexpr int OPTIMAL_DATA_SIZE = 1'400; // default MTU size is 1500
+
 enum protocol_t : int8_t { tcp = 1, udp = 2, udpr = 3 };
 
 // p_cnt_t:   packet number type.
@@ -141,20 +144,20 @@ class rejected_data : public std::exception {
 
   public:
     rejected_data(p_cnt_t packet_number) : _packet_number(packet_number),
-          _msg("Data packet nr: " + std::to_string(packet_number) + " rejected") {}
+       _msg("Data packet nr: " + std::to_string(packet_number) + " rejected") {}
 
     const char *what() const throw() { return _msg.c_str(); }
 };
 
-class data_packet_smaller_than_expected : public std::exception {
+class data_packet_wrong_format : public std::exception {
   private:
     std::string _msg;
 
   public:
     const int _nr;
-    data_packet_smaller_than_expected(int nr)
+    data_packet_wrong_format(int nr)
         : _msg("Data packet number " + 
-            std::to_string(nr) + " has less bytes than expected"), _nr(nr) {}
+            std::to_string(nr) + " is in wrong format"), _nr(nr) {}
     const char *what() const throw() { return _msg.c_str(); }
 };
 
@@ -167,7 +170,8 @@ session_t session_id_generate() {
 
 // Packet types classes.
 class PacketBase {
-private:
+  private:
+    // Helper function to call mtb before read.
     session_t read_session_from_begining(IO::PacketReaderBase &reader) {
         reader.mtb();
         return std::get<1>(reader.readGeneric<packet_type_t, session_t>());
@@ -177,8 +181,7 @@ private:
 
     PacketBase(session_t session_id) : _session_id(session_id) {}
     PacketBase(IO::PacketReaderBase &reader) 
-    : _session_id(read_session_from_begining(reader)) 
-    {}
+    : _session_id(read_session_from_begining(reader)) {}
 
     void fillSender(IO::PacketSender &sender) const {
         sender.add_var<packet_type_t, session_t>(getID(), _session_id);
@@ -301,9 +304,8 @@ template <> class Packet<DATA> : public PacketOrderedBase {
                  b_cnt_t packet_byte_cnt, char *data)
         : PacketOrderedBase(session_id, packet_number),
           _packet_byte_cnt(packet_byte_cnt), 
-          _data(data, data + packet_byte_cnt) {
-        // std::memcpy((void *)_data.data(), data, packet_byte_cnt);
-    }
+          _data(data, data + packet_byte_cnt) {}
+
     Packet(session_t session_id, p_cnt_t packet_number,
                  b_cnt_t packet_byte_cnt, std::vector<char> data)
         : PacketOrderedBase(session_id, packet_number),
@@ -312,7 +314,11 @@ template <> class Packet<DATA> : public PacketOrderedBase {
     Packet(IO::PacketReaderBase &reader) 
     : PacketOrderedBase(reader), 
     _packet_byte_cnt(to_host(std::get<0>(reader.readGeneric<b_cnt_t>()))),
-    _data(try_to_read_data(reader)) {}
+    _data(try_to_read_data(reader)) {
+        if (_packet_byte_cnt > MAX_DATA_SIZE) {
+            throw data_packet_wrong_format(_packet_number);
+        }
+    }
 
     IO::PacketSender getSender(IO::Socket &socket, sockaddr_in *receiver) const {
         IO::PacketSender sender(socket, receiver);
@@ -328,7 +334,7 @@ template <> class Packet<DATA> : public PacketOrderedBase {
         try {
             return reader.readn(_packet_byte_cnt);
         } catch (IO::packet_smaller_than_expected &e) {
-            throw data_packet_smaller_than_expected(_packet_number);
+            throw data_packet_wrong_format(_packet_number);
         }
     }
 };
