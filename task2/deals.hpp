@@ -7,9 +7,8 @@
 #include <optional>
 #include <functional>
 
-// Helper function to only define every counting function once
-// and to define last one as sum of the others.
-
+// Helper class to in deal definition.
+// Allows for every deal counting function to be defined once.
 template<class T>
 class FunctionAdder {
   private:
@@ -33,7 +32,7 @@ class Deal {
   public:
     const uint MAX_LEW_COUNT = 13;
 
-    enum DEAL_t : int8_t {
+    enum DEAL_t : uint {
         NO_LEW = 0,
         NO_KIER = 1,
         NO_DAMA = 2,
@@ -80,8 +79,13 @@ class Deal {
 
   public:    
     Deal(DEAL_t deal, uint first_player) : _table(4, std::nullopt), 
-    _scores(4, 0), _deal(deal), _first_player(first_player),
-     _next_player(first_player) {};
+        _scores(4, 0), _deal(deal), _first_player(first_player),
+        _next_player(first_player) {};
+    Deal(std::string_view &text, bool full_match = false) : 
+        Deal((DEAL_t)parser(deals, text), 
+            (uint)parser(Place::places, text, full_match)) {}
+    Deal(std::string_view &&text, bool full_match = false) : 
+        Deal(text, full_match) {}
 
     void put(Card card) {
         if (_table[_next_player].has_value()) {
@@ -100,11 +104,8 @@ class Deal {
     }
 
     uint get_loser() const {
-        for (auto e : _table) {
-            if (!e.has_value()) {
-                // TODO
-                throw new std::runtime_error("ERRORORO");
-            }
+        if (!is_done()) {
+            throw new std::runtime_error("ERRORORO");
         }
 
         uint loser = _first_player;
@@ -138,14 +139,15 @@ class Deal {
 
     uint get_next_player() const { return _next_player; }
 
-    DEAL_t parse_deal(std::string_view &text) {
-        for (id_t i = 0; i < deals.size(); i++) {
-            if (text.starts_with(deals[i])) {
-                text.remove_prefix(deals[i].size());
-                return DEAL_t(i);
-            }
-        } 
-        throw std::runtime_error("ERROROROROOR"); // TODO
+    inline static DEAL_t parse(std::string_view &text) {
+        return (DEAL_t)parser(deals, text);
+        // for (id_t i = 0; i < deals.size(); i++) {
+        //     if (text.starts_with(deals[i])) {
+        //         text.remove_prefix(deals[i].size());
+        //         return DEAL_t(i);
+        //     }
+        // } 
+        // throw std::runtime_error("ERROROROROOR"); // TODO
     }
 };
 #endif
