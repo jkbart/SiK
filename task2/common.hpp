@@ -10,6 +10,11 @@
 #include <set>
 #include <tuple>
 #include <algorithm>
+#include <random>
+#include <ranges>
+
+
+std::mt19937 gen{std::random_device{}()};
 
 class Card {
   public:
@@ -23,6 +28,29 @@ class Card {
     };
 
     using id_t = std::vector<std::string>::size_type;
+
+    enum VALUES : id_t {
+        n2 = 0,
+        n3 = 1,
+        n4 = 2,
+        n5 = 3,
+        n6 = 4,
+        n7 = 5,
+        n8 = 6,
+        n9 = 7,
+        n10 = 8,
+        WALET = 9,
+        DAMA = 10,
+        KROL = 11,
+        AS = 12
+    };
+
+    enum COLORS : id_t {
+        TREFL = 0,
+        KARO = 1,
+        KIER = 2,
+        PIK = 3
+    };
 
   private:
     id_t parse_value(std::string_view &text) {
@@ -51,42 +79,60 @@ class Card {
         throw std::runtime_error("NOT FOUND COLOR OF CARD");
     }
 
+    id_t _value, _color;
   public:
-
-    const id_t _value, _color;
-
     Card(id_t value, id_t color) : _value(value), _color(color) {}
-    Card(std::string_view &text) : 
-    _value(parse_value(text)), _color(parse_color(text)) {}
+    Card(std::string_view &text) : Card(parse_value(text), parse_color(text)) {}
     Card(std::string_view &&text) : Card(text) {}
+
+    id_t get_value() const { return _value; }
+    id_t get_color() const { return _color; }
 
     operator std::string() {
         return values[_value] + colors[_color];
     }
+
+    bool operator<=>(const Card&) const = default;
+};
+
+struct pole {
+    const int a,b;
+    pole(int aa, int bb) : a(aa), b(bb) {} 
 };
 
 class Deck {
   private:
-    std::set<Card> _deck;
+    std::vector<Card> _deck;
 
   public:
-    Deck(bool full) {
+    Deck(bool full = false) {
         if (full) {
-            for (auto value = 0; value < Card::values.size(); value++) {
-                for (auto color = 0; color < Card::colors.size(); color++) {
-                    _deck.insert(Card(value, color));
+            for (id_t value = 0; value < Card::values.size(); value++) {
+                for (id_t color = 0; color < Card::colors.size(); color++) {
+                    _deck.push_back(Card(value, color));
                 }
             }
+
+            std::ranges::shuffle(_deck, gen);
         }
     }
 
     bool get(Card card) {
-        return _deck.erase(card);
+        auto it = std::ranges::find(_deck, card);
+        if (it == std::end(_deck)) {
+            return false;
+        }
+        _deck.erase(it);
+        return true;
     }
 
     bool add(Card card) {
-        auto is_added = std::get<1>(_deck.insert(card));
-        return is_added;
+        if (std::ranges::find(_deck, card) != std::end(_deck)) {
+            return false;
+        }
+
+        _deck.push_back(card);
+        return true;
     }
 };
 
@@ -100,7 +146,7 @@ class Place {
 
   private:
     id_t parse_place(std::string_view &text) {
-        for (auto id = 0; id < places.size(); id++) {
+        for (id_t id = 0; id < places.size(); id++) {
             if (text.starts_with(places[id])) {
                 text.remove_prefix(places[id].size());
                 return id;
@@ -110,13 +156,17 @@ class Place {
         // TODO: better excpetion
         throw std::runtime_error("PLACE NOT CORRECT FORMAT");
     }
+
+    id_t _place;
+    
   public:
-
-    const id_t _place;
-
     Place(id_t place) : _place(place) {}
     Place(std::string_view &text) : _place(parse_place(text)) {}
     Place(std::string_view &&text) : Place(text) {}
+
+    id_t get_place() const {
+        return _place;
+    }
 
     operator std::string() {
         return places[_place];
