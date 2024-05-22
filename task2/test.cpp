@@ -9,23 +9,16 @@
 #include <vector>
 #include <cctype>
 
-// using namespace DEBUG_NS;
-using namespace std::literals;
-
-std::vector<std::string> tab = {"A", "B", "C", "D"};
-
-uint parse_number_with_maybe_card_behind(std::string_view &text) {
-    auto first_char = std::ranges::find_if(text, [](char x) {return std::isalpha(x);});
-    std::cout << (std::string)(first_char) << " " << first_char << "\n";
-    if (std::ranges::find(tab, (std::string)(first_char)) != tab.end()) {
-
-    }
-    std::cout << (std::ranges::find(tab, (std::string)(first_char)) == tab.begin() + 2) << "\n";
-    std::cout << (std::ranges::find(tab, (std::string)(first_char)) == tab.begin() + 1) << "\n";
-    return 0;
-}
+#include "common.hpp"
+#include "comms.hpp"
 
 int main() {
-    auto a = "12C"sv;
-    parse_number_with_maybe_card_behind(a);
+    std::string wrong = "WRONG10";
+    std::string taken = "TAKEN102C3C4C5CN";
+    std::string score = "SCOREN1W2E6S12";
+
+    WRONG a1(wrong);
+    TAKEN a12(taken);
+    SCORE a122(score);
+    std::cout << list_to_string(a122._scores) << "\n";
 }

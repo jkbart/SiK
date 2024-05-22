@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 #include <chrono>
+#include <source_location>
 
 namespace DEBUG_NS {
 #ifdef DEBUG
@@ -13,7 +14,6 @@ static constexpr bool debug = true;
 static constexpr bool debug = false;
 #endif
 
-static int cnt = 0;
 
 std::string time_printer(auto begin) {
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -25,16 +25,60 @@ std::string time_printer(auto begin) {
     return time + "ms";
 }
 
-template <class... Args> void DBG_printer(const Args &... args) {
-    static const auto begin = std::chrono::steady_clock::now();
-    if constexpr (!debug)
-        return;
-
-    std::clog << "[DEBUG][" << time_printer(begin) << "] ";
-    ((std::clog << args << " "), ...);
-    std::clog << "\n" << std::flush;
-
-    cnt++;
+static const auto& start_time() {
+    static const auto time = std::chrono::steady_clock::now();
+    return time;
 }
+
+// static auto get_cnt() {
+//     static int cnt = 0;
+//     return cnt++;
+// }
+
+
+struct DBG {
+    const std::source_location loc;
+    DBG(std::source_location location = std::source_location::current()) : loc(location) {}
+
+    template <class... Args> 
+    void log(const Args &... args) {
+        if constexpr (!debug)
+            return;
+
+        std::clog << "[DEBUG][" << time_printer(start_time()) << "]";
+        std::clog << "[" << loc.file_name() << ":" << loc.line() << "] ";
+        // std::clog << "[" << loc.function_name() << "] ";
+        ((std::clog << args << " "), ...);
+        std::clog << "\n" << std::flush;
+
+        // get_cnt();
+    }
+};
+
+// template <class T, class... Args> 
+// void DBG_printer(const Helper<T> first, const Args &... args) {
+//     if constexpr (!debug)
+//         return;
+
+//     std::clog << "[DEBUG][" << time_printer(start_time()) << "]";
+//     std::clog << "[" << first.loc.function_name() << "]";
+//     std::clog << first.value << " ";
+//     ((std::clog << args << " "), ...);
+//     std::clog << "\n" << std::flush;
+
+//     // get_cnt();
+// }
+
+// void DBG_printer(const std::source_location loc = std::source_location::current()) {
+//     static const auto begin = std::chrono::steady_clock::now();
+//     if constexpr (!debug)
+//         return;
+
+//     std::clog << "[DEBUG][" << time_printer(start_time()) << "]";
+//     std::clog << "[" << loc.function_name() << "]";
+//     std::clog << "\n" << std::flush;
+
+//     // get_cnt();
+// }
 } // namespace DEBUG_NS
 #endif /* IO_HPP */
