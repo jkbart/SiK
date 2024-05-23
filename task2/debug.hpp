@@ -14,7 +14,6 @@ static constexpr bool debug = true;
 static constexpr bool debug = false;
 #endif
 
-
 std::string time_printer(auto begin) {
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - begin)
@@ -25,60 +24,34 @@ std::string time_printer(auto begin) {
     return time + "ms";
 }
 
-static const auto& start_time() {
-    static const auto time = std::chrono::steady_clock::now();
-    return time;
-}
-
-// static auto get_cnt() {
-//     static int cnt = 0;
-//     return cnt++;
-// }
+static const auto start_time = std::chrono::steady_clock::now();
 
 
-struct DBG {
-    const std::source_location loc;
-    DBG(std::source_location location = std::source_location::current()) : loc(location) {}
+// Source: https://quuxplusone.github.io/blog/2020/02/12/source-location/
+struct DBGStream {
+    const std::string _name;
+    DBGStream(std::string name) : _name(name) {}
 
-    template <class... Args> 
-    void log(const Args &... args) {
-        if constexpr (!debug)
-            return;
+    struct Annotated {
+        /*IMPLICIT*/ Annotated(DBGStream& s,
+                  std::source_location loc = std::source_location::current())
+        {
+            *this << "[" << s._name << "][" 
+                  << time_printer(start_time) << "]["
+                  << loc.file_name() << ":" << loc.line() << "] ";
+        }
+    };
 
-        std::clog << "[DEBUG][" << time_printer(start_time()) << "]";
-        std::clog << "[" << loc.file_name() << ":" << loc.line() << "] ";
-        // std::clog << "[" << loc.function_name() << "] ";
-        ((std::clog << args << " "), ...);
-        std::clog << "\n" << std::flush;
-
-        // get_cnt();
+    template<class T>
+    friend Annotated operator<<(Annotated a, T msg) {
+        if constexpr (!debug) {
+            return a;
+        }
+        std::clog << msg;
+        return a;
     }
 };
 
-// template <class T, class... Args> 
-// void DBG_printer(const Helper<T> first, const Args &... args) {
-//     if constexpr (!debug)
-//         return;
-
-//     std::clog << "[DEBUG][" << time_printer(start_time()) << "]";
-//     std::clog << "[" << first.loc.function_name() << "]";
-//     std::clog << first.value << " ";
-//     ((std::clog << args << " "), ...);
-//     std::clog << "\n" << std::flush;
-
-//     // get_cnt();
-// }
-
-// void DBG_printer(const std::source_location loc = std::source_location::current()) {
-//     static const auto begin = std::chrono::steady_clock::now();
-//     if constexpr (!debug)
-//         return;
-
-//     std::clog << "[DEBUG][" << time_printer(start_time()) << "]";
-//     std::clog << "[" << loc.function_name() << "]";
-//     std::clog << "\n" << std::flush;
-
-//     // get_cnt();
-// }
+static DBGStream debuglog("DBG");
 } // namespace DEBUG_NS
-#endif /* IO_HPP */
+#endif /* DEBUG_HPP */

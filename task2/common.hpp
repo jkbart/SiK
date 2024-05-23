@@ -22,7 +22,7 @@ std::mt19937 gen{std::random_device{}()};
 
 bool matches(const std::vector<std::string> &range, std::string_view &text, 
     bool full_match = false) {
-    DBG().log();
+    debuglog << "\n";
     for (auto i = 0; i < range.size(); i++) {
         if (text.starts_with(range[i])) {
             if (full_match && text.size() != range[i].size())
@@ -37,7 +37,7 @@ bool matches(const std::vector<std::string> &range, std::string_view &text,
 
 template<class T>
 std::vector<T> parse_list(std::string_view &text, bool full_match = false) {
-    DBG().log(std::string("PARSE LIST:"), text);
+    debuglog << "PARSE LIST:" << text << "\n";
     std::vector<T> ret;
 
     while (!text.empty()) {
@@ -57,7 +57,7 @@ std::vector<T> parse_list(std::string_view &text, bool full_match = false) {
 
 auto parser(const std::vector<std::string> &range, std::string_view &text, 
     bool full_match = false) {
-    DBG().log("PARSER:", text);
+    debuglog << "PARSER:" << text << "\n";
     for (auto i = 0; i < range.size(); i++) {
         if (text.starts_with(range[i])) {
             if (full_match && text.size() != range[i].size())

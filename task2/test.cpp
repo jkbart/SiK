@@ -11,6 +11,7 @@
 
 #include "common.hpp"
 #include "comms.hpp"
+#include "debug.hpp"
 
 int main() {
     std::string wrong = "WRONG10";
@@ -21,4 +22,5 @@ int main() {
     TAKEN a12(taken);
     SCORE a122(score);
     std::cout << list_to_string(a122._scores) << "\n";
+    DEBUG_NS::debuglog << "DEBUGING MSG\n";
 }
