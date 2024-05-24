@@ -1,26 +1,54 @@
-// #include "debug.hpp"
-// #include "common.hpp"
-// #include "deals.hpp"
+#include <unistd.h>
 
-#include <algorithm>
-#include <iostream>
-#include <ranges>
-#include <string_view>
-#include <vector>
-#include <cctype>
 
-#include "common.hpp"
-#include "comms.hpp"
-#include "debug.hpp"
+int
+main(int argc, char *argv[ ])
+{
+    int c;
+    int bflg, aflg, errflg;
+    char *ifile;
+    char *ofile;
+    extern char *optarg;
+    extern int optind, optopt;
 
-int main() {
-    std::string wrong = "WRONG10";
-    std::string taken = "TAKEN102C3C4C5CN";
-    std::string score = "SCOREN1W2E6S12";
-
-    WRONG a1(wrong);
-    TAKEN a12(taken);
-    SCORE a122(score);
-    std::cout << list_to_string(a122._scores) << "\n";
-    DEBUG_NS::debuglog << "DEBUGING MSG\n";
+    while ((c = getopt(argc, argv, ":abf:o:")) != -1) {
+        switch(c) {
+        case 'a':
+            if (bflg)
+                errflg++;
+            else
+                aflg++;
+            break;
+        case 'b':
+            if (aflg)
+                errflg++;
+            else {
+                bflg++;
+            }
+            break;
+        case 'f':
+            ifile = optarg;
+            break;
+        // case 'o':
+        //     ofile = optarg;
+        //     break;
+        //     case ':':       /* -f or -o without operand */
+        //             fprintf(stderr,
+        //                     "Option -%c requires an operand\n", optopt);
+        //             errflg++;
+        //             break;
+        // case '?':
+        //             fprintf(stderr,
+        //                     "Unrecognized option: -%c\n", optopt);
+        //     errflg++;
+        }
+    }
+    if (errflg) {
+        // fprintf(stderr, "usage: . . . ");
+        // exit(2);
+    }
+    for ( ; optind < argc; optind++) {
+        if (access(argv[optind], R_OK)) {
+}
+}
 }
