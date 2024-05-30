@@ -22,7 +22,7 @@ std::mt19937 gen{std::random_device{}()};
 
 bool matches(const std::vector<std::string> &range, std::string_view &text, 
     bool full_match = false) {
-    debuglog << "\n";
+    // debuglog << "\n";
     for (auto i = 0; i < range.size(); i++) {
         if (text.starts_with(range[i])) {
             if (full_match && text.size() != range[i].size())
@@ -37,7 +37,7 @@ bool matches(const std::vector<std::string> &range, std::string_view &text,
 
 template<class T>
 std::vector<T> parse_list(std::string_view &text, bool full_match = false) {
-    debuglog << "PARSE LIST:" << text << "\n";
+    // debuglog << "PARSE LIST:" << text << "\n";
     std::vector<T> ret;
 
     while (!text.empty()) {
@@ -57,7 +57,7 @@ std::vector<T> parse_list(std::string_view &text, bool full_match = false) {
 
 auto parser(const std::vector<std::string> &range, std::string_view &text, 
     bool full_match = false) {
-    debuglog << "PARSER:" << text << "\n";
+    // debuglog << "PARSER:" << text << "\n";
     for (auto i = 0; i < range.size(); i++) {
         if (text.starts_with(range[i])) {
             if (full_match && text.size() != range[i].size())
@@ -132,26 +132,12 @@ class Card {
     using id_t = std::vector<std::string>::size_type;
 
     enum VALUES : id_t {
-        n2 = 0,
-        n3 = 1,
-        n4 = 2,
-        n5 = 3,
-        n6 = 4,
-        n7 = 5,
-        n8 = 6,
-        n9 = 7,
-        n10 = 8,
-        WALET = 9,
-        DAMA = 10,
-        KROL = 11,
-        AS = 12
+        n2 = 0, n3 = 1, n4 = 2, n5 = 3, n6 = 4, n7 = 5, n8 = 6, n9 = 7, n10 = 8, 
+        WALET = 9, DAMA = 10, KROL = 11, AS = 12
     };
 
     enum COLORS : id_t {
-        TREFL = 0,
-        KARO = 1,
-        KIER = 2,
-        PIK = 3
+        TREFL = 0, KARO = 1, KIER = 2, PIK = 3
     };
 
   private:
@@ -183,6 +169,13 @@ class Deck {
     std::vector<Card> _deck;
 
   public:
+
+    Deck(std::vector<Card> deck) : _deck(deck) {}
+    Deck(std::string_view &text, bool full_match = false) : 
+        _deck(parse_list<Card>(text, full_match)) {}
+    Deck(std::string_view &&text, bool full_match = false) : 
+        Deck(text, full_match) {}
+
     Deck(bool full = false) {
         if (full) {
             for (id_t value = 0; value < Card::values.size(); value++) {
@@ -193,6 +186,12 @@ class Deck {
 
             std::ranges::shuffle(_deck, gen);
         }
+    }
+
+    bool has_color(Card::id_t color) {
+        return std::ranges::any_of(_deck, [color](auto c) { 
+                return c.get_color() == color; 
+            });
     }
 
     bool get(Card card) {
@@ -212,6 +211,9 @@ class Deck {
         _deck.push_back(card);
         return true;
     }
+
+    size_t size() { return _deck.size(); }
+    std::vector<Card> list() const { return _deck; }
 };
 
 class Place {
@@ -219,6 +221,8 @@ class Place {
     inline static const std::vector<std::string> places{
         "N", "E", "S", "W"
     };
+
+    inline static const int player_count = places.size();
 
     using id_t = std::vector<std::string>::size_type;
 
@@ -238,6 +242,10 @@ class Place {
 
     operator std::string() const {
         return places[_place];
+    }
+
+    operator id_t() const {
+        return _place;
     }
 
     inline static bool valid(std::string_view text, bool full_match = false) {

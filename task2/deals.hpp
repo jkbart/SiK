@@ -2,10 +2,17 @@
 #define DEALS_HPP
 
 #include "common.hpp"
+#include "debug.hpp"
+using namespace DEBUG_NS;
 
 #include <vector>
 #include <optional>
 #include <functional>
+#include <ranges>
+
+
+static constexpr int PLAYER_CNT = 4;
+static constexpr int LEW_CNT = 13;
 
 // Helper class to in deal definition.
 // Allows for every deal counting function to be defined once.
@@ -30,124 +37,178 @@ class FunctionAdder {
 
 class Deal {
   public:
-    const uint MAX_LEW_COUNT = 13;
+    inline static const uint MAX_LEW_COUNT = 13;
 
-    enum DEAL_t : uint {
-        NO_LEW = 0,
-        NO_KIER = 1,
-        NO_DAMA = 2,
-        NO_PANA = 3,
-        NO_KIER_KROL = 4,
-        NO_7th_LAST_LEW = 5,
-        ROZBOJNIK = 6
-    };
+    // { // Types of deals and their indexes.
+    //     NO_LEW = 0,
+    //     NO_KIER = 1,
+    //     NO_DAMA = 2,
+    //     NO_PANA = 3,
+    //     NO_KIER_KROL = 4,
+    //     NO_7th_LAST_LEW = 5,
+    //     ROZBOJNIK = 6
+    // }
 
     inline static const std::vector<std::string> deals{
         "1", "2", "3", "4", "5", "6", "7"
     };
 
-    const std::vector<std::function<int()>> dealf{
-        FunctionAdder<int>::add([]() { return 1; }),
-        FunctionAdder<int>::add([&, this]() { 
-            return std::ranges::count_if(_table, 
-                [](auto c){ return c->get_color() == Card::KIER; }); }),
-        FunctionAdder<int>::add([&, this]() {
-            return 5 * std::ranges::count_if(_table, 
-                [](auto c){ return c->get_value() == Card::DAMA; }); }),
-        FunctionAdder<int>::add([&, this]() { 
-            return 2 * std::ranges::count_if(_table, 
-                [](auto c){ return (c->get_value() == Card::WALET || 
-                    c->get_value() == Card::KROL); }); }),
-        FunctionAdder<int>::add([&, this]() {
-            return 18 * std::ranges::count_if(_table, 
-                [](auto c){ return (c->get_value() == Card::KROL && 
-                    c->get_color() == Card::KIER); }); }),
-        FunctionAdder<int>::add([&, this]() {
-            return 10 * (_lew_counter == MAX_LEW_COUNT ||
-                _lew_counter == 7); }),
-        FunctionAdder<int>::sum()
+    struct LewState {
+        std::vector<Card> state;
+        uint _first_player;
+        uint _loser;
     };
 
   private:
-    std::vector<std::optional<Card>> _table;
-    std::vector<int> _scores;
+    // Function for score calculations. 
+    std::vector<std::function<int()>> dealf{
+        FunctionAdder<int>::add([]() { return 1; }),
 
-    DEAL_t _deal;
+        FunctionAdder<int>::add([&, this]() { 
+            return std::ranges::count_if(_table, 
+                [](auto c){ return c.get_color() == Card::KIER; }); }),
+
+        FunctionAdder<int>::add([&, this]() {
+            return 5 * std::ranges::count_if(_table, 
+                [](auto c){ return c.get_value() == Card::DAMA; }); }),
+
+        FunctionAdder<int>::add([&, this]() { 
+            return 2 * std::ranges::count_if(_table, 
+                [](auto c){ return (c.get_value() == Card::WALET || 
+                    c.get_value() == Card::KROL); }); }),
+
+        FunctionAdder<int>::add([&, this]() {
+            return 18 * std::ranges::count_if(_table, 
+                [](auto c){ return (c.get_value() == Card::KROL && 
+                    c.get_color() == Card::KIER); }); }),
+
+        FunctionAdder<int>::add([&, this]() {
+            return 10 * (_lew_counter == MAX_LEW_COUNT ||
+                _lew_counter == 7); }),
+
+        FunctionAdder<int>::sum()
+    };
+
+    // Overall game stats
+    std::vector<Deck> _first_hands;
+    std::vector<LewState> _history;
+    std::vector<uint> _scores = std::vector<uint>(4, 0);
+
+    uint _deal;
+
+    // Current lew state
+    std::vector<Deck> _hands;
+    std::vector<Card> _table;
     uint _first_player;
-    uint _next_player;
+    uint _placed_cnt = 0;
     uint _lew_counter = 0;
 
   public:    
-    Deal(DEAL_t deal, uint first_player) : _table(4, std::nullopt), 
-        _scores(4, 0), _deal(deal), _first_player(first_player),
-        _next_player(first_player) {};
-    Deal(std::string_view &text, bool full_match = false) : 
-        Deal((DEAL_t)parser(deals, text), 
-            (uint)parser(Place::places, text, full_match)) {}
-    Deal(std::string_view &&text, bool full_match = false) : 
-        Deal(text, full_match) {}
+    Deal(uint deal, uint first_player, std::vector<Deck> hands) :  _deal(deal), 
+        _first_player(first_player), _hands(hands), _first_hands(hands), 
+        _table(4, Card(0,0)) {
+        if (_hands.size() != PLAYER_CNT || 
+            std::ranges::any_of(_hands, [](auto h) { 
+                return h.size() != LEW_CNT; 
+            })) {
+            debuglog << " number of hands: " <<  _hands.size() << "\n";
+            for (auto i = 0; i < _hands.size(); i++) {
+                debuglog << "[ER] Player " << i << " hand size is " 
+                         << _hands[i].size() << "\n";
+            }
+            throw std::runtime_error("Player decks are incorrect.");
+        }
+    };
+    // Deal(std::string_view &text, bool full_match = false) : 
+    //     Deal((DEAL_t)parser(deals, text), 
+    //         (uint)parser(Place::places, text, full_match)) {}
+    // Deal(std::string_view &&text, bool full_match = false) : 
+    //     Deal(text, full_match) {}
+    uint get_type() const { return _deal; }
+    uint get_lew_cnt() const { return _lew_counter + 1; }
+    uint get_first_player() const { return _first_player; }
+    uint get_placed_cnt() const { return _placed_cnt; }
 
-    void put(Card card) {
-        if (_table[_next_player].has_value()) {
-            // TODO
-            throw new std::runtime_error("ERRORORO");
+    std::vector<Card> get_table() const { return _table; }
+    std::vector<uint> get_scores() const { return _scores; }
+
+    std::vector<Deck> get_first_hands() const { return _first_hands; }
+    std::vector<LewState> get_history() const { return _history; }
+
+    uint get_next_player() const { 
+        return (_first_player + _placed_cnt) % PLAYER_CNT; 
+    }
+
+
+    bool put(uint player, Card card) {
+        if (_placed_cnt >= PLAYER_CNT ||
+            player != (_first_player + _placed_cnt) % PLAYER_CNT) {
+            debuglog << "Gracz " << player << " dokłada w nie swojej turze" << "\n";
+            return false;
         }
 
-        _table[_next_player].emplace(card);
+        if (player != _first_player && card.get_color() != 
+                _table[_first_player].get_color() && 
+            _hands[player].has_color(_table[_first_player].get_color())) {
+            debuglog << "Gracz " << player << " nie dokłada do koloru" << "\n";
+            return false;
+        }
 
-        _next_player = (_next_player + 1) % _table.size();
+        if (!_hands[player].get(card)) {
+            debuglog << "Gracz " << player << " zagrywa nie posiadną karte" << "\n";
+            return false;
+        }
+
+        _table[player] = card;
+        _placed_cnt++;
+        return true;
     }
 
     // Checks if all players gave card. Turn can end normally.
     bool is_done() const {
-        return std::ranges::all_of(_table, [](auto c) { return (bool)c; });
+        return _placed_cnt == PLAYER_CNT;
     }
 
     uint get_loser() const {
-        if (!is_done()) {
-            throw new std::runtime_error("ERRORORO");
-        }
-
         uint loser = _first_player;
-        uint value = _table[_first_player]->get_value();
-        uint color = _table[_first_player]->get_color();
+        uint value = _table[_first_player].get_value();
+        uint color = _table[_first_player].get_color();
 
-        for (Card::id_t i = 0; i < _table.size(); i++) {
-            if (value < _table[i]->get_value() && 
-                color == _table[i]->get_color()) {
+        for (auto i = 0; i < _table.size(); i++) {
+            if (color == _table[i].get_color() && 
+                value < _table[i].get_value()) {
                 loser = i;
-                value = _table[i]->get_value();
+                value = _table[i].get_value();
             }
         }
 
         return loser;
     }
 
-    void end_lew() {
+    bool end_lew() {
+        if (!is_done())
+            throw new std::runtime_error("Ending undone lew");
+
         auto loser = get_loser();
         _scores[loser] += dealf[_deal]();
 
-        _first_player = _next_player = loser;
-        for (auto &e : _table) {
-            e.reset();
+        _history.push_back({_table, _first_player, loser});
+
+        _lew_counter++;
+
+        if (_lew_counter == MAX_LEW_COUNT) {
+            return true;
         }
+
+        _first_player = loser;
+        _placed_cnt = 0;
+
+        return false;
     }
 
-    const std::vector<std::optional<Card>>& get_table() { return _table; }
-
-    const std::vector<int>& get_scores() { return _scores; }
-
-    uint get_next_player() const { return _next_player; }
-
-    inline static DEAL_t parse(std::string_view &text) {
-        return (DEAL_t)parser(deals, text);
-        // for (id_t i = 0; i < deals.size(); i++) {
-        //     if (text.starts_with(deals[i])) {
-        //         text.remove_prefix(deals[i].size());
-        //         return DEAL_t(i);
-        //     }
-        // } 
-        // throw std::runtime_error("ERROROROROOR"); // TODO
+    static uint parse(std::string_view &text) {
+        return (uint)parser(deals, text);
     }
 };
+
 #endif

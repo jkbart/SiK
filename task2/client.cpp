@@ -6,6 +6,8 @@
 #include <sys/socket.h>
 #include <netdb.h>
 
+#include "network.hpp"
+
 int main(int argc, char* argv[]) {
     int check_args = 0;
 
@@ -29,7 +31,7 @@ int main(int argc, char* argv[]) {
             if (i == argc) {
                 throw std::invalid_argument("No host port value");
             }
-            port = std::stoul(argv[i]);
+            port = NET::read_port(argv[i]);
         } else if (!strcmp(argv[i], "-4")) {
             ip_v = AF_INET;
         } else if (!strcmp(argv[i], "-6")) {

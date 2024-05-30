@@ -37,6 +37,11 @@ bool operator==(const sockaddr_in &lhs, const sockaddr_in &rhs) {
 }
 
 namespace IO {
+
+class NETAdress {
+    
+}
+
 constexpr int MAX_UDP_PACKET_SIZE = 65'535;
 
 class timeout_error : public std::exception {

@@ -19,8 +19,9 @@ std::string time_printer(auto begin) {
                     std::chrono::steady_clock::now() - begin)
                     .count();
     std::string time = std::to_string(ms);
-    time.insert(0, 6 - time.size(), '-');
-    time.insert(3, 1, '\'');
+    time.insert(0, 7 - time.size(), '.');
+    time.insert(4, 1, '\'');
+    time.insert(1, 1, '\'');
     return time + "ms";
 }
 
