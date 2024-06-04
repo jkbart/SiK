@@ -7,6 +7,5 @@
 
 
 int main() {
-    std::string text = "TAKEN110C10D5H6S";
-    TAKEN d(text);
+    std::cout << std::quoted("hel\nlo\n");
 }

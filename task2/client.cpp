@@ -43,6 +43,7 @@ void autoremover(Deck &deck, std::vector<Card> cards) {
 }
 
 int main(int argc, char* argv[]) {
+    try {
     int check_args = 0;
 
     char  *host;
@@ -105,7 +106,7 @@ int main(int argc, char* argv[]) {
     Poller poller;
     std::shared_ptr<Reporter> logger;
     if (is_automatic) { // Will only log if player is automatic.
-        logger = std::make_shared<Reporter>(dup(STDOUT_FILENO), poller);
+        logger = std::make_shared<Reporter>(dup_fd(STDOUT_FILENO), poller);
     }
 
     std::unique_ptr<MessengerBI> server(new MessengerBI(server_socket, poller,
@@ -114,9 +115,9 @@ int main(int argc, char* argv[]) {
     server->send_msg(IAM(my_place).get_msg());
 
     std::unique_ptr<MessengerIN> handlerIN(new MessengerIN(
-                    dup(STDIN_FILENO), poller, "", "", nullptr, "\n"));
+                    dup_fd(STDIN_FILENO), poller, "", "", nullptr, "\n"));
     std::unique_ptr<MessengerOUT> handlerOUT(new MessengerOUT(
-                    dup(STDOUT_FILENO), poller, "", "", nullptr, "\n"));
+                    dup_fd(STDOUT_FILENO), poller, "", "", nullptr, "\n"));
 
     while (poller.size()) {
         int ret = poller.run();
@@ -136,6 +137,8 @@ int main(int argc, char* argv[]) {
                 if (is_closing) break;
                 try {
                 std::unique_ptr<COMMS> comm;
+
+                // Start of handling diffrent messeges.
                 if (matches<BUSY>(msg)) {
                     debuglog << "matched to BUSY" << "\n";
                     is_closing = true;
@@ -182,7 +185,8 @@ int main(int argc, char* argv[]) {
                 } else  {
                     // Ignore wrong messeges.
                 }
-                debuglog << "ISAUTOMATIC " << is_automatic << "\n";
+                // End of handling diffrent messeges.
+
                 if (!is_automatic) {
                     debuglog << "printing UI\n";
                     handlerOUT->send_msg(comm->getUI());
@@ -194,20 +198,24 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            if (is_closing || ((server->revents() & POLLHUP) && 
-                                !(server->revents() & ~POLLIN))) {
+            if (is_closing || server->closed()) {
                 server.reset();
             }
         }
 
-        if (handlerOUT)
+        if (handlerOUT) {
             handlerOUT->runOUT();
+            if (!server && !handlerOUT->send_size())
+                handlerOUT.reset();
+        }
 
-        if (!server && !handlerOUT->send_size())
-            handlerOUT.reset();
 
-        if (!handlerOUT && !server) {
+        if (!handlerOUT || !server) {
             handlerIN.reset();
+        }
+
+        if (logger && logger.use_count() == 1 && logger->send_size() == 0) {
+            logger.reset();
         }
 
         if (handlerIN) {
@@ -249,5 +257,8 @@ int main(int argc, char* argv[]) {
 
         poller.print_debug();
     }
-
+    } catch (std::exception &e) {
+        std::cerr << e.what() << "\n";
+        return 1;
+    }
 }

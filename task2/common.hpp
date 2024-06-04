@@ -1,7 +1,7 @@
 #ifndef COMMON_HPP
 #define COMMON_HPP
 
-#include "debug.hpp"
+#include "exceptions.hpp"
 
 #include <vector>
 #include <string>
@@ -20,9 +20,9 @@ using namespace DEBUG_NS;
 
 std::mt19937 gen{std::random_device{}()};
 
+// Helper functions for parsing.
 bool matches(const std::vector<std::string> &range, std::string_view &text, 
     bool full_match = false) {
-    // debuglog << "\n";
     for (auto i = 0; i < range.size(); i++) {
         if (text.starts_with(range[i])) {
             if (full_match && text.size() != range[i].size())
@@ -37,7 +37,6 @@ bool matches(const std::vector<std::string> &range, std::string_view &text,
 
 template<class T>
 std::vector<T> parse_list(std::string_view &text, bool full_match = false) {
-    // debuglog << "PARSE LIST:" << text << "\n";
     std::vector<T> ret;
 
     while (!text.empty()) {
@@ -46,8 +45,10 @@ std::vector<T> parse_list(std::string_view &text, bool full_match = false) {
         }
 
         T last(text);
+
+        // Checks if there are no duplicates.
         if (std::ranges::find(ret, last) != ret.end()) {
-            throw std::runtime_error("IN PARSE LSIT DUPLICATE");
+            throw game_error("there are duplicates in list to parse");
         }
         ret.push_back(last);
     }
@@ -57,6 +58,7 @@ std::vector<T> parse_list(std::string_view &text, bool full_match = false) {
 
 // Reads up maximal possible possible uint while avoiding overflow.
 uint parser_uint(std::string_view &text, bool full_match = false) {
+    auto text_copy = text; // copy for error handling.
     uint ans = 0;
     bool check = false;
 
@@ -70,7 +72,7 @@ uint parser_uint(std::string_view &text, bool full_match = false) {
     }
 
     if (!check || (!text.empty() && full_match)) {
-        throw std::runtime_error("ERROR IN UINT PARSING");
+        throw parsing_error(text_copy, "uint", full_match);
     }
 
     return ans;
@@ -103,7 +105,6 @@ std::string list_to_string(const std::vector<T> &list, std::string delim = "") {
 
 auto parser(const std::vector<std::string> &range, std::string_view &text, 
     bool full_match = false) {
-    // debuglog << "PARSER:" << text << "\n";
     for (auto i = 0; i < range.size(); i++) {
         if (text.starts_with(range[i])) {
             if (full_match && text.size() != range[i].size())
@@ -113,9 +114,7 @@ auto parser(const std::vector<std::string> &range, std::string_view &text,
         }
     }
 
-    debuglog << "parser error " << text << " " << list_to_string(range, ", ") << "\n";
-    // TODO
-    throw std::runtime_error("NO MATCH IN ALL CASES");
+    throw parsing_error(text, range, full_match);
 }
 
 class Card {

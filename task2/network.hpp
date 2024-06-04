@@ -21,6 +21,8 @@
 #include <tuple>
 #include <functional>
 
+#include "exceptions.hpp"
+
 #include "debug.hpp"
 using namespace DEBUG_NS;
 
@@ -39,9 +41,10 @@ std::string getname(int socket,
                     std::function<int(int, sockaddr*, socklen_t*)> f) {
     sockaddr_storage st;
     socklen_t len;
-    if (f(socket, (sockaddr*) &st, &len) != 0) {
-        debuglog << strerror(errno) << "\n";
-        throw std::runtime_error("getpeername failed");
+
+    int sys_call_ret = f(socket, (sockaddr*) &st, &len);
+    if (sys_call_ret != 0) {
+        throw syscall_error("get...name", sys_call_ret);
     }
     int domain;
     uint16_t port;
@@ -53,14 +56,12 @@ std::string getname(int socket,
         domain = AF_INET6;
         port = ntohs(((sockaddr_in6*)&st)->sin6_port);
     } else {
-        debuglog << strerror(errno) << "\n";
-        throw std::runtime_error("Unknown protocol");
+        throw syscall_error("get...name::len", len);
     }
 
     char buffor[INET6_ADDRSTRLEN];
     if (nullptr == inet_ntop(domain, &st, buffor, INET6_ADDRSTRLEN)) {
-        debuglog << strerror(errno) << "\n";
-        throw std::runtime_error("inet_ntop failed");
+        throw syscall_error("inet_ntop", 0);
     }
 
     return std::string(buffor) + ":" + std::to_string(port);
@@ -87,14 +88,15 @@ int connect(char *host, uint16_t port, int domain) {
 
     if (errcode != 0) {
         debuglog << gai_strerror(errno) << "\n";
-        throw std::runtime_error("getaddrinfo");
+        throw syscall_error(std::string("getaddrinfo(") + 
+                            std::string(gai_strerror(errno)) + 
+                            std::string(")"), errcode);
     }
 
     int sfd = socket(hints.ai_family, hints.ai_socktype, 0); // last argument equal to hints.ai_protocol does not work for some reason.
     if (sfd == -1) {
         freeaddrinfo(address_result);
-        debuglog << strerror(errno) << "\n";
-        throw std::runtime_error("socket");
+        throw syscall_error("socket", sfd);
     }
 
     if (hints.ai_family == AF_INET6) {
@@ -104,11 +106,12 @@ int connect(char *host, uint16_t port, int domain) {
         server_address.sin6_addr =
                 ((struct sockaddr_in6 *) (address_result->ai_addr))->sin6_addr;
         server_address.sin6_port = htons(port);
-        if (::connect(sfd, (sockaddr*)&server_address, sizeof(sockaddr_in6)) != 0) {
+        int sys_call_ret = 
+            ::connect(sfd, (sockaddr*)&server_address, sizeof(sockaddr_in6));
+        if (sys_call_ret != 0) {
             freeaddrinfo(address_result);
             close(sfd);
-            debuglog << strerror(errno) << "\n";
-            throw std::runtime_error("connect");
+            throw syscall_error("connect", sys_call_ret);
         }
     } else if (hints.ai_family == AF_INET) {
         debuglog << "Connecting using ipv4\n";
@@ -117,17 +120,17 @@ int connect(char *host, uint16_t port, int domain) {
         server_address.sin_addr =
                 ((struct sockaddr_in *) (address_result->ai_addr))->sin_addr;
         server_address.sin_port = htons(port);
-        if (::connect(sfd, (sockaddr*)&server_address, sizeof(sockaddr_in)) != 0) {
+        int sys_call_ret = 
+            ::connect(sfd, (sockaddr*)&server_address, sizeof(sockaddr_in6));
+        if (sys_call_ret != 0) {
             freeaddrinfo(address_result);
             close(sfd);
-            debuglog << strerror(errno) << "\n";
-            throw std::runtime_error("connect");
+            throw syscall_error("connect", sys_call_ret);
         }
     } else {
         freeaddrinfo(address_result);
         close(sfd);
-        debuglog << strerror(errno) << "\n";
-        throw std::runtime_error("getaddrinfo");
+        throw syscall_error("getaddrinfo", errcode);
     }
 
     return sfd;
@@ -277,10 +280,10 @@ class Socket {
             htonl(INADDR_ANY); // Listening on all interfaces.
         server_address.sin_port = htons(port);
 
-        if (::bind(*_socket_fd, (sockaddr *)&server_address,
-                   (socklen_t)sizeof server_address) < 0) {
-            throw std::runtime_error(std::string("Couldn't bind socket: ") +
-                                     std::strerror(errno));
+        int sys_call_ret = ::bind(*_socket_fd, (sockaddr *)&server_address,
+                   (socklen_t)sizeof server_address);
+        if (sys_call_ret < 0) {
+            throw syscall_error("bind", sys_call_ret);
         }
     }
 
@@ -299,16 +302,14 @@ class Socket {
     Socket(int type, int domain = AF_INET, int protocol = 0) {
         *_socket_fd = socket(domain, type, protocol);
         if (*_socket_fd < 0) {
-            throw std::runtime_error(std::string("Couldn't create socket: ") +
-                                     std::strerror(errno));
+            throw syscall_error("socket", *_socket_fd);
         }
     }
 
     Socket(int fd) {
         *_socket_fd = fd;
         if (fd < 0) {
-            throw std::runtime_error(std::string("Couldn't create socket: ") +
-                                     std::strerror(errno));
+            throw syscall_error("socket", *_socket_fd);
         }
     }
 };

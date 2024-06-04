@@ -4,6 +4,7 @@
 #include "debug.hpp"
 #include "common.hpp"
 #include "deals.hpp"
+#include "exceptions.hpp"
 
 #include <vector>
 #include <string>
@@ -22,7 +23,7 @@ class COMMS {
         std::string_view ans = msg;
 
         if (!ans.starts_with(prefix))
-            throw std::runtime_error("Incorrect prefix: " + msg + ", " + prefix);
+            throw parsing_error(ans, prefix, false);
 
         ans.remove_prefix(prefix.size());
         return ans;
@@ -121,7 +122,7 @@ uint parse_number_with_maybe_card_behind(std::string_view &text) {
     number.remove_suffix(sv.size());
 
     if (number.size() == 0) {
-        throw std::runtime_error("NO number before card");
+        throw parsing_error(text, "uint(?Card)", false);
     }
 
     text.remove_prefix(number.size());
@@ -185,7 +186,7 @@ class TAKEN : public COMMS {
             (std::string)place), 
         _lew_cnt(lew_cnt), _cards(cards), _place(place) {
         if (_cards.size() != PLAYER_CNT) {
-            throw std::runtime_error("WRONG NUMBER OF CARDS  IN TKANM");
+            throw game_error("wrong number of cards in TAKEN");
         }
 
     }
@@ -194,7 +195,7 @@ class TAKEN : public COMMS {
         _lew_cnt(parse_number_with_maybe_card_behind(text)),
         _cards(parse_list<Card>(text)), _place(text, true) {
         if (_cards.size() != PLAYER_CNT) {
-            throw std::runtime_error("WRONG NUMBER OF CARDS  IN TKANM");
+            throw game_error("wrong number of cards in TAKEN");
         }
     }
 
@@ -207,6 +208,7 @@ class TAKEN : public COMMS {
 };
 
 std::vector<uint> get_scores(std::string_view &text, bool full_match = false) {
+    auto text_copy = text; // copy for error handling.
     auto table_size = Place::places.size();
 
     std::vector<uint> scores(table_size, 0);
@@ -215,14 +217,14 @@ std::vector<uint> get_scores(std::string_view &text, bool full_match = false) {
     while (table_size--) {
         Place p(text);
         if (seen[p.get_place()]) {
-            throw std::runtime_error("SCORE DOUBLE PLACE");
+            throw game_error("score got 2 scores for same place");
         }
 
         scores[p.get_place()] = parser_uint(text);
     }
 
     if (!text.empty()) {
-        throw std::runtime_error("SCOREs thrash at the end");
+        throw parsing_error(text_copy, "scores", full_match);
     }
 
     return scores;
@@ -245,7 +247,6 @@ std::string scores_to_string_UI(const std::vector<uint>& scores) {
     return ret;
 }
 
-// SCORE<miejsce przy stole klienta><liczba punktów><miejsce przy stole klienta><liczba punktów><miejsce przy stole klienta><liczba punktów><miejsce przy stole klienta><liczba punktów>\r\n
 class SCORE : public COMMS {
   public:
     inline const static std::string _prefix = "SCORE";
@@ -264,7 +265,6 @@ class SCORE : public COMMS {
     }
 };
 
-// TOTAL<miejsce przy stole klienta><liczba punktów><miejsce przy stole klienta><liczba punktów><miejsce przy stole klienta><liczba punktów><miejsce przy stole klienta><liczba punktów>\r\n
 class TOTAL : public COMMS {
   public:
     inline const static std::string _prefix = "TOTAL";
@@ -297,7 +297,7 @@ bool matches(const std::string &e) {
     return e.starts_with(get_prefix<T>());
 }
 
-// Functions intagrating deals and comms.
+// Functions integrating deals and comms.
 std::vector<std::string> get_player_deal_history(const Deal &deal, uint player) {
     std::vector<std::string> ret;
     auto history = deal.get_history();

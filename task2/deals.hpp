@@ -2,6 +2,8 @@
 #define DEALS_HPP
 
 #include "common.hpp"
+#include "exceptions.hpp"
+
 #include "debug.hpp"
 using namespace DEBUG_NS;
 
@@ -116,14 +118,10 @@ class Deal {
                 debuglog << "[ER] Player " << i << " hand size is " 
                          << _hands[i].size() << "\n";
             }
-            throw std::runtime_error("Player decks are incorrect.");
+            throw game_error("Player decks are incorrect.");
         }
     };
-    // Deal(std::string_view &text, bool full_match = false) : 
-    //     Deal((DEAL_t)parser(deals, text), 
-    //         (uint)parser(Place::places, text, full_match)) {}
-    // Deal(std::string_view &&text, bool full_match = false) : 
-    //     Deal(text, full_match) {}
+
     uint get_type() const { return _deal; }
     uint get_lew_cnt() const { return _lew_counter + 1; }
     uint get_first_player() const { return _first_player; }
@@ -143,7 +141,8 @@ class Deal {
     bool put(uint player, Card card) {
         if (_placed_cnt >= PLAYER_CNT ||
             player != (_first_player + _placed_cnt) % PLAYER_CNT) {
-            debuglog << "Gracz " << player << " dokłada w nie swojej turze" << "\n";
+            debuglog << "Gracz " << player 
+                     << " dokłada w nie swojej turze" << "\n";
             return false;
         }
 
@@ -155,7 +154,8 @@ class Deal {
         }
 
         if (!_hands[player].get(card)) {
-            debuglog << "Gracz " << player << " zagrywa nie posiadną karte" << "\n";
+            debuglog << "Gracz " << player 
+                     << " zagrywa nie posiadną karte" << "\n";
             return false;
         }
 
@@ -186,8 +186,9 @@ class Deal {
     }
 
     bool end_lew() {
-        if (!is_done())
-            throw new std::runtime_error("Ending undone lew");
+        if (!is_done()) {
+            throw game_error("Ending undone lew");
+        }
 
         auto loser = get_loser();
         _scores[loser] += dealf[_deal]();

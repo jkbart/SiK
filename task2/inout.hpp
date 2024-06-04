@@ -14,8 +14,18 @@
 #include <memory>
 #include <iomanip>
 
+#include "exceptions.hpp"
+
 #include "debug.hpp"
 using namespace DEBUG_NS;
+
+// Duplicates fd.
+int dup_fd(int fd) {
+    int ret = dup(fd);
+    if (ret == -1)
+        throw syscall_error("dup", ret);
+    return ret;
+}
 
 // Converts \n and \r to \\n and \\r
 std::string special_printer(const std::string &text) {
@@ -155,6 +165,7 @@ class Messenger {
     std::string _my_name;
     std::string _peer_name;
     std::string _delim;
+    bool _is_closed = false;
 
   public:
     const int _desc;
@@ -167,6 +178,7 @@ class Messenger {
     bool did_timeout();
     void set_timeout(int ms);
     void reset_timeout();
+    bool closed();
 
     virtual ~Messenger();
 };
@@ -259,6 +271,7 @@ int Messenger::revents() { return _poller.get(_poll_idx).revents; }
 bool Messenger::did_timeout() { return _poller.did_timeout(_poll_idx); }
 void Messenger::set_timeout(int ms) { _poller.set_timeout(_poll_idx, ms); }
 void Messenger::reset_timeout() { return set_timeout(0); }
+bool Messenger::closed() {return _is_closed; }
 
 Messenger::~Messenger() {
     _poller.rm(_poll_idx);
@@ -278,9 +291,10 @@ void MessengerIN::read() {
     ssize_t len_read = ::read(_desc, _buffor.data() + _size, readlen);
 
     if (len_read < 0) {
-        throw std::runtime_error("read < 0");
+        throw syscall_error("read", len_read);
     } else if (len_read == 0) { 
-        throw std::runtime_error("read == 0");
+        _is_closed = true;
+        return;
     }
     _size += len_read;
 }
@@ -332,7 +346,7 @@ std::vector<std::string> MessengerIN::runIN() {
 }
 
 MessengerIN::~MessengerIN() {
-    if (_logger)
+    if (_logger && _size > 0)
         _logger->recvdFrom(_my_name, _peer_name, special_printer(
             std::string(_buffor.begin(), _buffor.begin() + _size)));
 }
@@ -352,9 +366,9 @@ bool MessengerOUT::write() {
             _buffor_to_send.front().size() - _sended);
 
     if (len_write < 0) {
-        throw std::runtime_error("write < 0");
+        throw syscall_error("write", len_write);
     } else if (len_write == 0) { 
-        throw std::runtime_error("write == 0");
+        throw syscall_error("write == 0", len_write);
     }
 
     _sended += len_write;
@@ -371,7 +385,6 @@ bool MessengerOUT::write() {
             _poller.get(_poll_idx).events &= (~POLLOUT);
         }
         return true;
-        // _poller.get(_poll_idx).events = POLLIN;
     }
 
     return false;
@@ -406,6 +419,11 @@ MessengerBI::MessengerBI(int desc, Poller &poller, std::string my_name,
     MessengerOUT(desc, poller, my_name, peer_name, logger, delim) {}
 
 std::vector<std::string> MessengerBI::run() {
+    // Every option except for POLLIN and POLLOUT.
+    if (revents() & (POLLERR | POLLPRI | POLLRDHUP | POLLHUP | POLLNVAL)) {
+        _is_closed = true;
+    }
+
     runOUT();
     return runIN();
 }

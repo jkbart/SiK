@@ -23,6 +23,7 @@
 #include "common.hpp"
 #include "deals.hpp"
 #include "comms.hpp"
+#include "exceptions.hpp"
 
 class GameRun {
   private:
@@ -59,6 +60,7 @@ class GameRun {
 static constexpr int QUEUE_LENGTH = 10;
 
 int main(int argc, char* argv[]) {
+    try {
     // Parsing arguments
     int check_args = 0;
 
@@ -93,7 +95,8 @@ int main(int argc, char* argv[]) {
     }
 
     if (check_args != 1) {
-        throw std::invalid_argument("Not all args were specified");
+        throw std::invalid_argument(
+            "Not all args were specified, required: -p <port> -f <game_file>");
     }
 
     // Checking correctness of file.
@@ -110,10 +113,11 @@ int main(int argc, char* argv[]) {
     NET::Socket queue_socket(SOCK_STREAM, AF_INET6, 0);
 
     // Enabling ipv4 connections
-    int no = 0;     
-    if (setsockopt((int)queue_socket, IPPROTO_IPV6, IPV6_V6ONLY, (void *)&no, 
-                   sizeof(no)) == 0) {
-        std::runtime_error("setsockopt IPV6_V6ONLY failed");
+    int no = 0;
+    int syscall_ret = setsockopt((int)queue_socket, IPPROTO_IPV6, IPV6_V6ONLY, 
+                                 (void *)&no, sizeof(no));
+    if (syscall_ret != 0) {
+        throw syscall_error("setsockopt(IPV6_V6ONLY)", syscall_ret);
     }
 
     // Seting up listening socket.
@@ -122,13 +126,15 @@ int main(int argc, char* argv[]) {
     server_address.sin6_addr = in6addr_any; // Listening on all interfaces.
     server_address.sin6_port = htons(port);
 
-    if (bind((int)queue_socket, (struct sockaddr *) &server_address, (socklen_t) 
-        sizeof server_address) < 0) {
-        std::runtime_error("bind failed");
+    syscall_ret = bind((int)queue_socket, (struct sockaddr *) &server_address,
+                       (socklen_t) sizeof server_address);
+    if (syscall_ret < 0) {
+        throw syscall_error("bind", syscall_ret);
     }
 
-    if (listen((int)queue_socket, QUEUE_LENGTH) < 0) {
-        std::runtime_error("listen failed");
+    syscall_ret = listen((int)queue_socket, QUEUE_LENGTH);
+    if (syscall_ret < 0) {
+        throw syscall_error("listen", syscall_ret);
     }
 
     Poller poller;
@@ -146,7 +152,8 @@ int main(int argc, char* argv[]) {
 
     Deal deal = game.get_next();
     std::vector<uint> total_score(PLAYER_CNT, 0);
-    std::shared_ptr<Reporter> logger(new Reporter(dup(STDOUT_FILENO), poller));
+    std::shared_ptr<Reporter> logger(
+        new Reporter(dup_fd(STDOUT_FILENO), poller));
 
     while (poller.size()) {
         int ret = poller.run();
@@ -212,7 +219,7 @@ int main(int argc, char* argv[]) {
             if (skip) continue;
 
             // If it closed ther is no point in continuing sending msgs.
-            if ((*it)->revents() & POLLHUP) {
+            if ((*it)->closed()) {
                 debuglog << "Rejector end closed, closing as well" << "\n";
                 rejectors.erase(it);
                 continue;
@@ -341,7 +348,7 @@ int main(int argc, char* argv[]) {
                 active_player_cnt--;
             }
 
-            if (players[i] && players[i]->revents() & POLLHUP) {
+            if (players[i] && players[i]->closed()) {
                 debuglog << "Player " << (std::string)Place(i) 
                          << " end closed, closing as well\n";
                 players[i].reset();
@@ -394,7 +401,7 @@ int main(int argc, char* argv[]) {
 
             if (skip) continue;
 
-            if ((*it)->revents() & POLLHUP) {
+            if ((*it)->closed()) {
                 debuglog << "WFP end closed, closing as well" << "\n";
                 waiting_for_place.erase(it);
                 continue;
@@ -445,6 +452,10 @@ int main(int argc, char* argv[]) {
             logger.reset();
         }
     }
+    } catch (std::exception &e) {
+        std::cerr << e.what() << "\n";
+        return 1;
+    } 
 
 
 }
