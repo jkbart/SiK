@@ -55,21 +55,6 @@ std::vector<T> parse_list(std::string_view &text, bool full_match = false) {
     return ret;
 }
 
-auto parser(const std::vector<std::string> &range, std::string_view &text, 
-    bool full_match = false) {
-    // debuglog << "PARSER:" << text << "\n";
-    for (auto i = 0; i < range.size(); i++) {
-        if (text.starts_with(range[i])) {
-            if (full_match && text.size() != range[i].size())
-                break;
-            text.remove_prefix(range[i].size());
-            return i;
-        }
-    }
-    // TODO
-    throw std::runtime_error("NO MATCH IN ALL CASES");
-}
-
 // Reads up maximal possible possible uint while avoiding overflow.
 uint parser_uint(std::string_view &text, bool full_match = false) {
     uint ans = 0;
@@ -96,10 +81,8 @@ template<class T>
 std::string list_to_string(const std::vector<T> &list, std::string delim = "") {
     std::string ans = "";
     for (auto i = 0; i < list.size(); i++) {
+        if (i != 0) ans += delim;
         ans += static_cast<std::string>(list[i]);
-        if (i != list.size() - 1) {
-            ans += delim;
-        }
     }
     return ans;
 }
@@ -116,6 +99,23 @@ std::string list_to_string(const std::vector<T> &list, std::string delim = "") {
         }
     }
     return ans;
+}
+
+auto parser(const std::vector<std::string> &range, std::string_view &text, 
+    bool full_match = false) {
+    // debuglog << "PARSER:" << text << "\n";
+    for (auto i = 0; i < range.size(); i++) {
+        if (text.starts_with(range[i])) {
+            if (full_match && text.size() != range[i].size())
+                break;
+            text.remove_prefix(range[i].size());
+            return i;
+        }
+    }
+
+    debuglog << "parser error " << text << " " << list_to_string(range, ", ") << "\n";
+    // TODO
+    throw std::runtime_error("NO MATCH IN ALL CASES");
 }
 
 class Card {
@@ -188,10 +188,18 @@ class Deck {
         }
     }
 
-    bool has_color(Card::id_t color) {
+    bool has_color(Card::id_t color) const {
         return std::ranges::any_of(_deck, [color](auto c) { 
                 return c.get_color() == color; 
             });
+    }
+
+    bool has(Card card) const {
+        auto it = std::ranges::find(_deck, card);
+        if (it == std::end(_deck)) {
+            return false;
+        }
+        return true;
     }
 
     bool get(Card card) {

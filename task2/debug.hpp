@@ -6,6 +6,7 @@
 #include <string>
 #include <chrono>
 #include <source_location>
+#include <iomanip>
 
 namespace DEBUG_NS {
 #ifdef DEBUG
@@ -27,7 +28,9 @@ std::string time_printer(auto begin) {
 
 static const auto start_time = std::chrono::steady_clock::now();
 
-
+// Clang doesnt have std::source_location. 
+// Im using it for run time error detection
+#if (defined(__GNUC__) && !defined(__clang__))
 // Source: https://quuxplusone.github.io/blog/2020/02/12/source-location/
 struct DBGStream {
     const std::string _name;
@@ -38,8 +41,9 @@ struct DBGStream {
                   std::source_location loc = std::source_location::current())
         {
             *this << "[" << s._name << "][" 
-                  << time_printer(start_time) << "]["
-                  << loc.file_name() << ":" << loc.line() << "] ";
+                  << time_printer(start_time) << "][" << std::setfill('.') 
+                  << std::setw(11) << loc.file_name() << ":" 
+                  << std::setw(3) << loc.line() << "] ";
         }
     };
 
@@ -52,6 +56,29 @@ struct DBGStream {
         return a;
     }
 };
+#else
+struct DBGStream {
+    const std::string _name;
+    DBGStream(std::string name) : _name(name) {}
+
+    struct Annotated {
+        /*IMPLICIT*/ Annotated(DBGStream& s)
+        {
+            *this << "[" << s._name << "][" 
+                  << time_printer(start_time) << "]";
+        }
+    };
+
+    template<class T>
+    friend Annotated operator<<(Annotated a, T msg) {
+        if constexpr (!debug) {
+            return a;
+        }
+        std::clog << msg;
+        return a;
+    }
+};
+#endif
 
 static DBGStream debuglog("DBG");
 } // namespace DEBUG_NS

@@ -12,6 +12,7 @@
 #include <tuple>
 #include <algorithm>
 #include <charconv>
+#include <ostream>
 
 class COMMS {
   protected:
@@ -32,6 +33,8 @@ class COMMS {
         return _msg;
     }
 
+    virtual std::string getUI() const = 0;
+
     // virtual std::string_view get_prefix() const = 0;
 
     virtual ~COMMS() {};
@@ -49,6 +52,10 @@ class IAM : public COMMS {
         COMMS(msg), _place(text, true) {}
 
     IAM(std::string msg) : IAM(msg, rem_prefix(msg, _prefix)) {}
+
+    std::string getUI() const {
+        return "New player wants to be placed at " + (std::string)Place(_place);
+    }
 };
 
 class BUSY : public COMMS {
@@ -74,6 +81,11 @@ class BUSY : public COMMS {
         COMMS(msg), _places(parse_list<Place>(text, true)) {}
 
     BUSY(std::string msg) : BUSY(msg, rem_prefix(msg, _prefix)) {}
+
+    std::string getUI() const {
+        return "Place busy, list of busy places received: " + 
+            list_to_string(_places, ", ");
+    }
 };
 
 
@@ -85,14 +97,20 @@ class DEAL : public COMMS {
     const std::vector<Card> _cards;
 
     DEAL(uint deal, Place place, std::vector<Card> cards) : 
-        COMMS(_prefix + (std::string)place + list_to_string(cards)), 
-        _deal(deal), _place(place), _cards(cards) {}
+        COMMS(_prefix + Deal::deals[deal] + (std::string)place + 
+            list_to_string(cards)), _deal(deal), _place(place), _cards(cards) {}
 
     DEAL(std::string msg, std::string_view text) :
         COMMS(msg), _deal(Deal::parse(text)), _place(text), 
         _cards(parse_list<Card>(text, true)) {}
 
     DEAL(std::string msg) : DEAL(msg, rem_prefix(msg, _prefix)) {}
+
+    std::string getUI() const {
+        return "New deal " + std::to_string(_deal) + ": starting place " + 
+            (std::string)_place + ", your cards: " + 
+            list_to_string(_cards, ", ") + ".";
+    }
 };
 
 uint parse_number_with_maybe_card_behind(std::string_view &text) {
@@ -128,6 +146,11 @@ class TRICK : public COMMS {
         _cards(parse_list<Card>(text, true)) {}
 
     TRICK(std::string msg) : TRICK(msg, rem_prefix(msg, _prefix)) {}
+
+    std::string getUI() const {
+        return "Trick: (" + std::to_string(_lew_cnt) + ") " + 
+            list_to_string(_cards, ", ");
+    }
 };
 
 class WRONG : public COMMS {
@@ -143,6 +166,11 @@ class WRONG : public COMMS {
         _lew_cnt(parse_number_with_maybe_card_behind(text)) {}
 
     WRONG(std::string msg) : WRONG(msg, rem_prefix(msg, _prefix)) {}
+
+    std::string getUI() const {
+        return "Wrong message received in trick " + std::to_string(_lew_cnt) + 
+            ".";
+    }
 };
 
 class TAKEN : public COMMS {
@@ -153,9 +181,10 @@ class TAKEN : public COMMS {
     const Place _place;
 
     TAKEN(uint lew_cnt, std::vector<Card> cards, Place place) : 
-        COMMS(_prefix + std::to_string(lew_cnt) + list_to_string(cards)), 
+        COMMS(_prefix + std::to_string(lew_cnt) + list_to_string(cards) + 
+            (std::string)place), 
         _lew_cnt(lew_cnt), _cards(cards), _place(place) {
-        if (_cards.size() != Place::places.size()) {
+        if (_cards.size() != PLAYER_CNT) {
             throw std::runtime_error("WRONG NUMBER OF CARDS  IN TKANM");
         }
 
@@ -164,12 +193,17 @@ class TAKEN : public COMMS {
     TAKEN(std::string msg, std::string_view text) : COMMS(msg), 
         _lew_cnt(parse_number_with_maybe_card_behind(text)),
         _cards(parse_list<Card>(text)), _place(text, true) {
-        if (_cards.size() != Place::places.size()) {
+        if (_cards.size() != PLAYER_CNT) {
             throw std::runtime_error("WRONG NUMBER OF CARDS  IN TKANM");
         }
     }
 
     TAKEN(std::string msg) : TAKEN(msg, rem_prefix(msg, _prefix)) {}
+
+    std::string getUI() const {
+        return "A trick " + std::to_string(_lew_cnt) + " is taken by " + 
+            (std::string)_place + list_to_string(_cards, ", ");
+    }
 };
 
 std::vector<uint> get_scores(std::string_view &text, bool full_match = false) {
@@ -194,10 +228,19 @@ std::vector<uint> get_scores(std::string_view &text, bool full_match = false) {
     return scores;
 }
 
-std::string scores_to_string(std::vector<uint>& scores) {
+std::string scores_to_string(const std::vector<uint>& scores) {
     std::string ret = "";
     for (uint i = 0; i < scores.size(); i++) {
         ret += (Place::places[i]) + std::to_string(scores[i]);
+    }
+    return ret;
+}
+
+std::string scores_to_string_UI(const std::vector<uint>& scores) {
+    std::string ret = "";
+    for (uint i = 0; i < scores.size(); i++) {
+        if (i != 0) ret += "\n";
+        ret += (Place::places[i]) + " | " + std::to_string(scores[i]);
     }
     return ret;
 }
@@ -215,12 +258,16 @@ class SCORE : public COMMS {
         _scores(get_scores(text, true)) {}
 
     SCORE(std::string msg) : SCORE(msg, rem_prefix(msg, _prefix)) {}
+
+    std::string getUI() const {
+        return "The scores are:\n" + scores_to_string_UI(_scores);
+    }
 };
 
 // TOTAL<miejsce przy stole klienta><liczba punktów><miejsce przy stole klienta><liczba punktów><miejsce przy stole klienta><liczba punktów><miejsce przy stole klienta><liczba punktów>\r\n
 class TOTAL : public COMMS {
   public:
-    inline const static std::string _prefix = "SCORE";
+    inline const static std::string _prefix = "TOTAL";
     const std::vector<uint> _scores;
 
     TOTAL(std::vector<uint> scores) : 
@@ -231,6 +278,10 @@ class TOTAL : public COMMS {
 
     TOTAL(std::string msg) : 
         TOTAL(msg, rem_prefix(msg, _prefix)) {}
+
+    std::string getUI() const {
+        return "The total scores are:\n" + scores_to_string_UI(_scores);
+    }
 };
 
 // Helper functions
@@ -275,7 +326,7 @@ std::string next_trick(const Deal &deal) {
         list.push_back(
             deal.get_table()[(deal.get_first_player() + i) % PLAYER_CNT]);
     }
-    return TRICK(deal.get_lew_cnt() + 1, list).get_msg();
+    return TRICK(deal.get_lew_cnt(), list).get_msg();
 }
 
 #endif

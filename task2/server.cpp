@@ -137,23 +137,29 @@ int main(int argc, char* argv[]) {
     bool accepting = true;
     poller.get(idx_accept).events = POLLIN;
 
-    using msnger_ptr = std::unique_ptr<Messenger>;
+    using msnger_ptr = std::unique_ptr<MessengerBI>;
 
     int8_t active_player_cnt = 0;
     std::vector<msnger_ptr> players(PLAYER_CNT);
     std::set<msnger_ptr> rejectors; // Just sending data and closing.
     std::set<msnger_ptr> waiting_for_place;
 
-// fcntl(sock, F_SETFL, O_NONBLOCK)
-
     Deal deal = game.get_next();
     std::vector<uint> total_score(PLAYER_CNT, 0);
+    std::shared_ptr<Reporter> logger(new Reporter(dup(STDOUT_FILENO), poller));
 
-    while (true) {
+    while (poller.size()) {
         int ret = poller.run();
         if (ret < 0) {
             debuglog << "poll returned < 0" << "\n";
-            return 0;
+            return 1;
+        }
+        debuglog << "GROUP 0: running poll\n";
+        logger->runOUT();
+
+        if (poller.size() == 1 && logger->send_size() == 0) {
+            logger.reset();
+            break;
         }
         // debuglog << "Poll loop: " << ret << "\n";
 
@@ -169,12 +175,14 @@ int main(int argc, char* argv[]) {
 
                 if (active_player_cnt == PLAYER_CNT) {
                     debuglog << "New client, moving to rejectors" << "\n";
-                    msnger_ptr messenger(new Messenger(fd, poller));
+                    msnger_ptr messenger(new MessengerBI(fd, poller,
+                        NET::getsockname(fd), NET::getpeername(fd), logger));
                     messenger->send_msg(BUSY().get_msg());
                     rejectors.insert(std::move(messenger));
                 } else {
                     debuglog << "New client, waiting for place" << "\n";
-                    msnger_ptr messenger(new Messenger(fd, poller));
+                    msnger_ptr messenger(new MessengerBI(fd, poller,
+                        NET::getsockname(fd), NET::getpeername(fd), logger));
                     messenger->set_timeout(timeout);
                     waiting_for_place.insert(std::move(messenger));
                 }
@@ -205,7 +213,7 @@ int main(int argc, char* argv[]) {
 
             // If it closed ther is no point in continuing sending msgs.
             if ((*it)->revents() & POLLHUP) {
-                debuglog << "WFP end closed, closing as well" << "\n";
+                debuglog << "Rejector end closed, closing as well" << "\n";
                 rejectors.erase(it);
                 continue;
             }
@@ -227,7 +235,7 @@ int main(int argc, char* argv[]) {
             try {
             for (auto msg : players[i]->run()) {
                 if (!matches<TRICK>(msg)) {
-                    debuglog << "Player got unwanted msg, closing" << "\n";
+                    debuglog << "Player got not TRICK msg, closing" << "\n";
                     players[i].reset();
                     active_player_cnt--;
                     break;
@@ -241,7 +249,11 @@ int main(int argc, char* argv[]) {
                     break;
                 } else if (active_player_cnt != PLAYER_CNT ||
                             !deal.put(i, trick._cards[0])) {
-                    debuglog << "Player cannot put card now, WRONG" << "\n";
+                    if (active_player_cnt != PLAYER_CNT) {
+                        debuglog << "Not all players are connected, WRONG\n";
+                    } else {
+                        debuglog << "Player cannot put this card not, WRONG\n";
+                    }
                     players[i]->
                         send_msg(WRONG(deal.get_lew_cnt()).get_msg());
                 } else {
@@ -250,6 +262,13 @@ int main(int argc, char* argv[]) {
                     players[i]->reset_timeout();
 
                     if (deal.is_done()) {
+                        TAKEN taken(deal.get_lew_cnt(), deal.get_table(), 
+                                    Place(deal.get_loser()));
+                        for (uint i = 0; i < PLAYER_CNT; i++) {
+                            if (players[i].get() != nullptr)
+                                players[i]->send_msg(taken.get_msg());
+                        }
+
                         if (deal.end_lew()) {
                             debuglog << "Ending deal" << "\n";
                             auto score = deal.get_scores();
@@ -293,7 +312,8 @@ int main(int argc, char* argv[]) {
                     }
 
                     // Sending new trick
-                    debuglog << "sending next, next player: " << deal.get_next_player() << "\n";
+                    debuglog << "sending next, next player: " 
+                             << deal.get_next_player() << "\n";
                     if (players[deal.get_next_player()] != nullptr) {
                         debuglog << "Sending new trick: " 
                                  << next_trick(deal) << "\n";
@@ -319,6 +339,14 @@ int main(int argc, char* argv[]) {
                          << e.what() << "\n";
                 players[i].reset();
                 active_player_cnt--;
+            }
+
+            if (players[i] && players[i]->revents() & POLLHUP) {
+                debuglog << "Player " << (std::string)Place(i) 
+                         << " end closed, closing as well\n";
+                players[i].reset();
+                active_player_cnt--;
+                continue;
             }
         }
 
@@ -413,9 +441,11 @@ int main(int argc, char* argv[]) {
             }
         }
 
-
+        if (poller.size() == 1 && logger->send_size() == 0) {
+            logger.reset();
+        }
     }
 
-}
 
+}
 
