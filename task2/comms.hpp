@@ -66,8 +66,8 @@ class BUSY : public COMMS {
 
     std::vector<Place> all_busy() {
         std::vector<Place> ret;
-        for (auto i = 0; i < Place::places.size(); i++) {
-            ret.push_back(i);
+        for (std::size_t i = 0; i < Place::places.size(); i++) {
+            ret.emplace_back(i);
         }
         return ret;
     }
@@ -116,7 +116,7 @@ class DEAL : public COMMS {
 
 uint parse_number_with_maybe_card_behind(std::string_view &text) {
     std::string_view sv = text;
-    for (int i = 0; i < text.size() && !Card::valid(sv) &&
+    for (std::size_t i = 0; i < text.size() && !Card::valid(sv) &&
                     std::isdigit(text[i]); i++, sv.remove_prefix(1)) {}
     std::string_view number = text;
     number.remove_suffix(sv.size());
@@ -127,7 +127,7 @@ uint parse_number_with_maybe_card_behind(std::string_view &text) {
 
     text.remove_prefix(number.size());
 
-    int ans;
+    int ans = 0;
     std::from_chars(number.begin(), number.end(), ans);
     return ans;
 }
@@ -308,9 +308,9 @@ std::vector<std::string> get_player_deal_history(const Deal &deal, uint player) 
     ret.push_back(DEAL(deal.get_type(), Place(first_player),
              deal.get_first_hands()[player].list()).get_msg());
 
-    for (auto lew_cnt = 0; lew_cnt < history.size(); lew_cnt++) {
+    for (std::size_t lew_cnt = 0; lew_cnt < history.size(); lew_cnt++) {
         std::vector<Card> list;
-        for (auto i = 0; i < PLAYER_CNT; i++) {
+        for (std::size_t i = 0; i < PLAYER_CNT; i++) {
             list.push_back(history[lew_cnt]
                 .state[(i + history[lew_cnt]._first_player) % PLAYER_CNT]);
         }
@@ -322,7 +322,7 @@ std::vector<std::string> get_player_deal_history(const Deal &deal, uint player) 
 
 std::string next_trick(const Deal &deal) {
     std::vector<Card> list;
-    for (auto i = 0; i < deal.get_placed_cnt(); i++) {
+    for (std::size_t i = 0; i < deal.get_placed_cnt(); i++) {
         list.push_back(
             deal.get_table()[(deal.get_first_player() + i) % PLAYER_CNT]);
     }

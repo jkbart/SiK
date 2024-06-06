@@ -13,6 +13,7 @@
 #include <random>
 #include <ranges>
 #include <limits.h>
+#include <cstddef>
 
 #include "debug.hpp"
 using namespace DEBUG_NS;
@@ -23,7 +24,7 @@ std::mt19937 gen{std::random_device{}()};
 // Helper functions for parsing.
 bool matches(const std::vector<std::string> &range, std::string_view &text, 
     bool full_match = false) {
-    for (auto i = 0; i < range.size(); i++) {
+    for (std::size_t i = 0; i < range.size(); i++) {
         if (text.starts_with(range[i])) {
             if (full_match && text.size() != range[i].size())
                 break;
@@ -82,7 +83,7 @@ template<class T>
     requires std::is_convertible_v<T, std::string>
 std::string list_to_string(const std::vector<T> &list, std::string delim = "") {
     std::string ans = "";
-    for (auto i = 0; i < list.size(); i++) {
+    for (std::size_t i = 0; i < list.size(); i++) {
         if (i != 0) ans += delim;
         ans += static_cast<std::string>(list[i]);
     }
@@ -94,7 +95,7 @@ template<class T>
     requires (std::is_integral_v<T> || std::is_floating_point_v<T>)
 std::string list_to_string(const std::vector<T> &list, std::string delim = "") {
     std::string ans = "";
-    for (auto i = 0; i < list.size(); i++) {
+    for (std::size_t i = 0; i < list.size(); i++) {
         ans += std::to_string(list[i]);
         if (i != list.size() - 1) {
             ans += delim;
@@ -105,7 +106,7 @@ std::string list_to_string(const std::vector<T> &list, std::string delim = "") {
 
 auto parser(const std::vector<std::string> &range, std::string_view &text, 
     bool full_match = false) {
-    for (auto i = 0; i < range.size(); i++) {
+    for (std::size_t i = 0; i < range.size(); i++) {
         if (text.starts_with(range[i])) {
             if (full_match && text.size() != range[i].size())
                 break;

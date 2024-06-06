@@ -8,6 +8,7 @@
 #include <string>
 #include <cerrno>
 #include <vector>
+#include <cstddef>
 
 using namespace std::string_literals;
 
@@ -44,7 +45,7 @@ class parsing_error : public std::exception {
             std::source_location::current()) {
         msg = "Cannot match (full="s + (full_match ? "1"s : "0"s) + "):\""s + 
               std::string(text) + "\" with one of {"s;
-        for (auto i = 0; i < match.size(); i++) {
+        for (std::size_t i = 0; i < match.size(); i++) {
             if (i != 0) msg += ", "s;
             msg += "\""s + match[i] + "\""s;
         }

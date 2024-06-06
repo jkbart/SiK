@@ -2,6 +2,7 @@
 #include <string>
 #include <cstring>       
 #include <fstream>
+#include <cstdlib>
 
 #include <netdb.h>
 #include <netinet/ip.h>
@@ -28,7 +29,7 @@
 class GameRun {
   private:
     std::vector<Deal> game;
-    int next_deal = 0;
+    std::size_t next_deal = 0;
   public:
     GameRun() = delete;
     GameRun(const std::string &filename) {
@@ -370,7 +371,7 @@ int main(int argc, char* argv[]) {
 
             bool skip = false;
             bool got_iam = false;
-            uint place;
+            uint place = -1; // Initialization to supress compiler warnings.
 
             try {
             // Check if got IAM, anserw WRONG to trick and close on wrong msg

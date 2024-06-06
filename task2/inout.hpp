@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <memory>
 #include <iomanip>
+#include <cstddef>
 
 #include "exceptions.hpp"
 
@@ -73,7 +74,7 @@ class Poller {
 
     int add(int fd) {
         // Reuse old index if possible.
-        for (int i = 0; i < poll_descriptors.size(); i++) {
+        for (std::size_t i = 0; i < poll_descriptors.size(); i++) {
             if (poll_descriptors[i].fd == INVALID_FD) {
                 poll_descriptors[i].fd = fd;
                 debuglog << "POLLER: " << "Adding new fd " << fd 
@@ -100,14 +101,14 @@ class Poller {
     }
 
     int run() {
-        for (int i = 0; i < poll_descriptors.size(); i++) {
+        for (std::size_t i = 0; i < poll_descriptors.size(); i++) {
             if (poll_descriptors[i].fd == INVALID_FD) {
                 poll_descriptors[i].events = 0;
                 poll_descriptors[i].revents = 0;
             }
         }
         int timeout = -1;
-        for (int i = 0; i < timeouts.size(); i++) {
+        for (std::size_t i = 0; i < timeouts.size(); i++) {
             if (timeouts[i] > 0 && (timeout == -1 || timeouts[i] < timeout))
                 timeout = timeouts[i];
             _did_timeout[i] = false;
@@ -123,7 +124,7 @@ class Poller {
                     .count();
 
         // Check if descriptor timedout.
-        for (int i = 0; i < timeouts.size(); i++) {
+        for (std::size_t i = 0; i < timeouts.size(); i++) {
             if (timeouts[i] == 0)
                 continue;
             timeouts[i] = std::max(0, timeouts[i] - duration);
@@ -139,7 +140,7 @@ class Poller {
     void print_debug() {
         debuglog << "POLL: READ WRITE ERR " << POLLIN << " " << POLLOUT << " " << POLLERR << "\n";
         debuglog << "POLL: fd events revents did_timeout\n";
-        for (int i = 0; i < timeouts.size(); i++) {
+        for (std::size_t i = 0; i < timeouts.size(); i++) {
             if (poll_descriptors[i].fd != INVALID_FD) {
                 debuglog << "POLL: " 
                          << poll_descriptors[i].fd << " "
@@ -159,6 +160,7 @@ class Reporter;
 
 class Messenger {
   protected:
+    const int _desc;
     Poller &_poller;
     int _poll_idx;
     std::shared_ptr<Reporter> _logger;
@@ -168,7 +170,6 @@ class Messenger {
     bool _is_closed = false;
 
   public:
-    const int _desc;
     Messenger(int desc, Poller &poller, std::string my_name, 
         std::string peer_name, std::shared_ptr<Reporter> logger = nullptr,
         std::string delim = "\r\n");
@@ -178,6 +179,7 @@ class Messenger {
     bool did_timeout();
     void set_timeout(int ms);
     void reset_timeout();
+    int get_fd();
     bool closed();
 
     virtual ~Messenger();
@@ -260,8 +262,8 @@ class Reporter : public MessengerOUT {
 
 Messenger::Messenger(int desc, Poller &poller, std::string my_name, 
         std::string peer_name, std::shared_ptr<Reporter> logger,
-        std::string delim) : _desc(desc), _poller(poller), _my_name(my_name), 
-    _peer_name(peer_name), _logger(logger), _delim(delim) {
+        std::string delim) : _desc(desc), _poller(poller), _logger(logger), 
+    _my_name(my_name), _peer_name(peer_name), _delim(delim) {
     _poll_idx = _poller.add(desc);
     _poller.get(_poll_idx).events = 0;
 }
@@ -271,6 +273,7 @@ int Messenger::revents() { return _poller.get(_poll_idx).revents; }
 bool Messenger::did_timeout() { return _poller.did_timeout(_poll_idx); }
 void Messenger::set_timeout(int ms) { _poller.set_timeout(_poll_idx, ms); }
 void Messenger::reset_timeout() { return set_timeout(0); }
+int Messenger::get_fd() { return _desc; }
 bool Messenger::closed() {return _is_closed; }
 
 Messenger::~Messenger() {
@@ -443,8 +446,6 @@ std::string Reporter::get_time() {
 }
 
 void Reporter::transmission(std::string msg, std::string from, std::string to) {
-    auto time_now = std::chrono::system_clock::now();
-
     send_msg("[" +  from + "," + to + "," + get_time() + "] " + msg);
 }
 

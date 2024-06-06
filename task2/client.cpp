@@ -46,10 +46,10 @@ int main(int argc, char* argv[]) {
     try {
     int check_args = 0;
 
-    char  *host;
-    uint port;
+    char  *host = nullptr;
+    uint port = 0;
     int domain = AF_UNSPEC;
-    std::string place_s;
+    std::string place_s = "";
     bool is_automatic = false;
 
     for (int i = 1; i < argc; i++) {
@@ -102,7 +102,7 @@ int main(int argc, char* argv[]) {
     Place my_place(place_s);
     Deck my_deck;
     std::vector<TAKEN> all_takes;
-    bool waits_for_trick = false;
+    // bool waits_for_trick = false;
 
     Poller poller;
     std::shared_ptr<Reporter> logger;
@@ -161,7 +161,7 @@ int main(int argc, char* argv[]) {
                         server->send_msg(TRICK(trick._lew_cnt, 
                             {autopicker(my_deck, trick._cards)}).get_msg());
                     } else {
-                        waits_for_trick = true;
+                        // waits_for_trick = true;
                     }
                     comm = std::make_unique<TRICK>(msg);
                 } else if (matches<WRONG>(msg)) {

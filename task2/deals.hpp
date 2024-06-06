@@ -11,6 +11,7 @@ using namespace DEBUG_NS;
 #include <optional>
 #include <functional>
 #include <ranges>
+#include <cstddef>
 
 
 static constexpr int PLAYER_CNT = 4;
@@ -106,15 +107,15 @@ class Deal {
     uint _lew_counter = 0;
 
   public:    
-    Deal(uint deal, uint first_player, std::vector<Deck> hands) :  _deal(deal), 
-        _first_player(first_player), _hands(hands), _first_hands(hands), 
-        _table(4, Card(0,0)) {
+    Deal(uint deal, uint first_player, std::vector<Deck> hands) : 
+    _first_hands(hands), _deal(deal), _hands(hands), 
+    _table(4, Card(0,0)), _first_player(first_player) {
         if (_hands.size() != PLAYER_CNT || 
             std::ranges::any_of(_hands, [](auto h) { 
                 return h.size() != LEW_CNT; 
             })) {
             debuglog << " number of hands: " <<  _hands.size() << "\n";
-            for (auto i = 0; i < _hands.size(); i++) {
+            for (std::size_t i = 0; i < _hands.size(); i++) {
                 debuglog << "[ER] Player " << i << " hand size is " 
                          << _hands[i].size() << "\n";
             }
@@ -174,7 +175,7 @@ class Deal {
         uint value = _table[_first_player].get_value();
         uint color = _table[_first_player].get_color();
 
-        for (auto i = 0; i < _table.size(); i++) {
+        for (std::size_t i = 0; i < _table.size(); i++) {
             if (color == _table[i].get_color() && 
                 value < _table[i].get_value()) {
                 loser = i;
