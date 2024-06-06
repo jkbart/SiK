@@ -91,11 +91,12 @@ int main(int argc, char* argv[]) {
     }
 
     if (check_args != (1 | 1<<1 | 1<<2)) {
-        throw std::invalid_argument("Not all args were specified");
+        throw std::invalid_argument("Not all args were specified, required: -h <host> -p <port> -46 (ipv4/ipv6) -NESW (statring place)");
     }
 
     // Connect to server.
     int server_socket = NET::connect(host, port, domain);
+    debuglog << "Connected!\n";
 
 
     Place my_place(place_s);
@@ -258,7 +259,7 @@ int main(int argc, char* argv[]) {
         poller.print_debug();
     }
     } catch (std::exception &e) {
-        std::cerr << e.what() << "\n";
+        std::cerr << "[ERROR] " << e.what() << "\n";
         return 1;
     }
 }

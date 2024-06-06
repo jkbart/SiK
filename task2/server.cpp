@@ -137,6 +137,9 @@ int main(int argc, char* argv[]) {
         throw syscall_error("listen", syscall_ret);
     }
 
+    debuglog << "Server listening on address: " 
+             << NET::getsockname(queue_socket) << "\n";
+
     Poller poller;
 
     int idx_accept = poller.add((int)queue_socket);
@@ -453,7 +456,7 @@ int main(int argc, char* argv[]) {
         }
     }
     } catch (std::exception &e) {
-        std::cerr << e.what() << "\n";
+        std::cerr << "[ERROR] " << e.what() << "\n";
         return 1;
     } 
 

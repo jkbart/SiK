@@ -79,7 +79,7 @@ int connect(char *host, uint16_t port, int domain) {
 
     struct addrinfo hints;
     memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_INET; //domain;
+    hints.ai_family = domain; //domain;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
@@ -87,19 +87,19 @@ int connect(char *host, uint16_t port, int domain) {
     int errcode = getaddrinfo(host, NULL, &hints, &address_result);
 
     if (errcode != 0) {
-        debuglog << gai_strerror(errno) << "\n";
+        debuglog << gai_strerror(errcode) << "\n";
         throw syscall_error(std::string("getaddrinfo(") + 
-                            std::string(gai_strerror(errno)) + 
+                            std::string(gai_strerror(errcode)) + 
                             std::string(")"), errcode);
     }
 
-    int sfd = socket(hints.ai_family, hints.ai_socktype, 0); // last argument equal to hints.ai_protocol does not work for some reason.
+    int sfd = socket(address_result->ai_family, address_result->ai_socktype, address_result->ai_protocol); // last argument equal to hints.ai_protocol does not work for some reason.
     if (sfd == -1) {
         freeaddrinfo(address_result);
         throw syscall_error("socket", sfd);
     }
 
-    if (hints.ai_family == AF_INET6) {
+    if (address_result->ai_family == AF_INET6) {
         debuglog << "Connecting using ipv6\n";
         struct sockaddr_in6 server_address;
         server_address.sin6_family = AF_INET6;  // IPv6
@@ -113,7 +113,7 @@ int connect(char *host, uint16_t port, int domain) {
             close(sfd);
             throw syscall_error("connect", sys_call_ret);
         }
-    } else if (hints.ai_family == AF_INET) {
+    } else if (address_result->ai_family == AF_INET) {
         debuglog << "Connecting using ipv4\n";
         struct sockaddr_in server_address;
         server_address.sin_family = AF_INET;  // IPv4
@@ -121,7 +121,7 @@ int connect(char *host, uint16_t port, int domain) {
                 ((struct sockaddr_in *) (address_result->ai_addr))->sin_addr;
         server_address.sin_port = htons(port);
         int sys_call_ret = 
-            ::connect(sfd, (sockaddr*)&server_address, sizeof(sockaddr_in6));
+            ::connect(sfd, (sockaddr*)&server_address, sizeof(sockaddr_in));
         if (sys_call_ret != 0) {
             freeaddrinfo(address_result);
             close(sfd);
