@@ -152,7 +152,7 @@ int main(int argc, char* argv[]) {
 
     int8_t active_player_cnt = 0;
     std::vector<msnger_ptr> players(PLAYER_CNT);
-    std::set<msnger_ptr> rejectors; // Just sending data and closing.
+    std::set<msnger_ptr> closer; // Just sending data and closing.
     std::set<msnger_ptr> waiting_for_place;
 
     Deal deal = game.get_next();
@@ -186,11 +186,11 @@ int main(int argc, char* argv[]) {
                 fcntl(fd, F_SETFL, O_NONBLOCK);
 
                 if (active_player_cnt == PLAYER_CNT) {
-                    debuglog << "New client, moving to rejectors" << "\n";
+                    debuglog << "New client, moving to closers" << "\n";
                     msnger_ptr messenger(new MessengerBI(fd, poller,
                         NET::getsockname(fd), NET::getpeername(fd), logger));
                     messenger->send_msg(BUSY().get_msg());
-                    rejectors.insert(std::move(messenger));
+                    closer.insert(std::move(messenger));
                 } else {
                     debuglog << "New client, waiting for place" << "\n";
                     msnger_ptr messenger(new MessengerBI(fd, poller,
@@ -201,22 +201,22 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        debuglog << "rejectors_size: " << rejectors.size()
-                << "wfp_size: " << waiting_for_place.size() << "\n";
+        debuglog << "closer_size: " << closer.size()
+                << " wfp_size: " << waiting_for_place.size() << "\n";
 
         // GROUP 2
-        // handle rejectors.
-        debuglog << "GROUP 2: handling rejectors\n";
-        for (auto it_main = rejectors.begin(); 
-                    it_main != rejectors.end();) {
+        // Handle closer.
+        debuglog << "GROUP 2: handling closer\n";
+        for (auto it_main = closer.begin(); 
+                    it_main != closer.end();) {
             // this allows to remove current iterator.
             auto it = it_main++;
             bool skip = false;
 
             // All incoming messeges are unwelcome.
             for (auto e : (*it)->run()) {
-                debuglog << "Rejector got unwanted messege, closing" << "\n";
-                rejectors.erase(it);
+                debuglog << "Closer got unwanted messege, closing" << "\n";
+                closer.erase(it);
                 skip = true;
                 continue;
             }
@@ -225,15 +225,15 @@ int main(int argc, char* argv[]) {
 
             // If it closed ther is no point in continuing sending msgs.
             if ((*it)->closed()) {
-                debuglog << "Rejector end closed, closing as well" << "\n";
-                rejectors.erase(it);
+                debuglog << "Closer end closed, closing as well" << "\n";
+                closer.erase(it);
                 continue;
             }
 
             // If we sended all msgs, we can close connection.
             if (!(*it)->send_size()) {
-                debuglog << "Rejector sended last messege, closing" << "\n";
-                rejectors.erase(it);
+                debuglog << "Closer sended last messege, closing" << "\n";
+                closer.erase(it);
                 continue;
             }
         }
@@ -310,7 +310,7 @@ int main(int argc, char* argv[]) {
                                 debuglog << "Ending game, no new deals" << "\n";
                                 for (uint j = 0; j < PLAYER_CNT; j++) {
                                     if (players[j].get() == nullptr) continue;
-                                    rejectors.insert(std::move(players[j]));
+                                    closer.insert(std::move(players[j]));
                                 }
 
                                 // Stopping accepting new connections.
@@ -415,14 +415,14 @@ int main(int argc, char* argv[]) {
             if (got_iam) {
                 if (players[place]) {
                     debuglog << "WFP got IAM for taken place,"
-                             << "moving to rejectors" << "\n";
+                             << "moving to Closer" << "\n";
                     std::vector<Place> busy_list;
                     for (int i = 0; i < PLAYER_CNT; i++)
                         if (players[i])
                             busy_list.emplace_back(i);
                     (*it)->send_msg(BUSY(busy_list).get_msg());
                     (*it)->reset_timeout();
-                    rejectors.insert(std::move(
+                    closer.insert(std::move(
                         waiting_for_place.extract(it).value()));
                 } else {
                     debuglog << "WFP got IAM for free place, "
