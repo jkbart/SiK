@@ -129,7 +129,7 @@ class Card {
         "C", "D", "H", "S"
     };
 
-    using id_t = std::vector<std::string>::size_type;
+    using id_t = std::size_t;
 
     enum VALUES : id_t {
         n2 = 0, n3 = 1, n4 = 2, n5 = 3, n6 = 4, n7 = 5, n8 = 6, n9 = 7, n10 = 8, 
@@ -230,9 +230,9 @@ class Place {
         "N", "E", "S", "W"
     };
 
-    inline static const int player_count = places.size();
+    inline static const int player_count = (int)places.size();
 
-    using id_t = std::vector<std::string>::size_type;
+    using id_t = std::size_t;
 
   private:
     id_t _place;

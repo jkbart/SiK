@@ -1,6 +1,6 @@
 CPP = g++
 CPPBASIC = -O2 -std=c++23 -Wall -Wextra
-#CPPEXTRA = -pedantic -Wshadow -Wformat=2 -Wfloat-equal -Wconversion -Wlogical-op -Wshift-overflow=2 -Wduplicated-cond -Wcast-qual -Wcast-align
+CPPEXTRA = -pedantic -Wshadow -Wformat=2 -Wfloat-equal -Wconversion -Wlogical-op -Wshift-overflow=2 -Wduplicated-cond -Wcast-qual -Wcast-align
 # fsanitize is bugged on my pc: prints one error line in infinte loop
 # CPPOTHER = -fsanitize=address -fsanitize=undefined -fno-sanitize-recover -fstack-protector 
 DEBUG = -DDEBUG -g

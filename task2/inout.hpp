@@ -54,15 +54,15 @@ class Poller {
   public:
     Poller() {}
 
-    struct pollfd& get(int i) { return poll_descriptors[i]; }
+    struct pollfd& get(std::size_t i) { return poll_descriptors[i]; }
 
-    void set_timeout(int i, int ms) { 
+    void set_timeout(std::size_t i, int ms) { 
         timeouts[i] = ms; 
         _did_timeout[i] = false; 
     }
 
-    int get_timeout(int i) { return timeouts[i]; }
-    bool did_timeout(int i) { return _did_timeout[i]; }
+    int get_timeout(std::size_t i) { return timeouts[i]; }
+    bool did_timeout(std::size_t i) { return _did_timeout[i]; }
 
     uint size() {
         uint ret = 0;
@@ -72,7 +72,7 @@ class Poller {
         return ret;
     }
 
-    int add(int fd) {
+    std::size_t add(int fd) {
         // Reuse old index if possible.
         for (std::size_t i = 0; i < poll_descriptors.size(); i++) {
             if (poll_descriptors[i].fd == INVALID_FD) {
@@ -94,7 +94,7 @@ class Poller {
         return poll_descriptors.size() - 1;
     }
 
-    void rm(int i) {
+    void rm(std::size_t i) {
         debuglog << "POLLER: " << "removing index " << i << "\n";
         poll_descriptors[i] = {.fd = INVALID_FD, .events = 0, .revents = 0};
         timeouts[i] = 0;
@@ -118,10 +118,11 @@ class Poller {
         auto start = std::chrono::steady_clock::now();
         int poll_status = poll(poll_descriptors.data(), 
                                poll_descriptors.size(), timeout);
-        int duration =
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - start)
-                    .count();
+
+        int duration = 
+            (int)std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count();
 
         // Check if descriptor timedout.
         for (std::size_t i = 0; i < timeouts.size(); i++) {
@@ -162,7 +163,7 @@ class Messenger {
   protected:
     const int _desc;
     Poller &_poller;
-    int _poll_idx;
+    std::size_t _poll_idx;
     std::shared_ptr<Reporter> _logger;
     std::string _my_name;
     std::string _peer_name;
@@ -410,7 +411,7 @@ void MessengerOUT::send_if_no_timeout(const std::string &msg) {
     }
 }
 
-int MessengerOUT::send_size() { return _buffor_to_send.size(); }
+int MessengerOUT::send_size() { return (int)_buffor_to_send.size(); }
 
 void MessengerOUT::runOUT() { if (revents() & POLLOUT) write(); }
 

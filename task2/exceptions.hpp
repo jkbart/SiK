@@ -19,7 +19,7 @@ class syscall_error : public std::exception {
   public:
     syscall_error() = delete;
 
-    syscall_error(const std::string &name, int ret, 
+    syscall_error(const std::string &name, long long ret, 
         std::source_location loc = std::source_location::current()) {
         msg = "Syscall \""s + name + 
               "\" returned "s + std::to_string(ret) +

@@ -47,7 +47,7 @@ int main(int argc, char* argv[]) {
     int check_args = 0;
 
     char  *host = nullptr;
-    uint port = 0;
+    uint16_t port = 0;
     int domain = AF_UNSPEC;
     std::string place_s = "";
     bool is_automatic = false;
@@ -220,30 +220,31 @@ int main(int argc, char* argv[]) {
         }
 
         if (handlerIN) {
-            for (auto e : handlerIN->runIN()) {
+            for (auto input : handlerIN->runIN()) {
                 if (is_automatic) {
                     throw std::runtime_error("Automatic player received input on STDIN");
                 }
 
-                if (e == "cards") {
+                if (input == "cards") {
                     handlerOUT->send_msg(
                         list_to_string(my_deck.list(), ", "));
-                } else if (e == "tricks") {
-                    for (auto &e : all_takes) {
-                        if (e._place == my_place) {
+                } else if (input == "tricks") {
+                    for (auto &take : all_takes) {
+                        if (take._place == my_place) {
                             handlerOUT->send_msg(
-                                list_to_string(e._cards, ", "));
+                                list_to_string(take._cards, ", "));
                         }
                     }
-                } else if (e.starts_with("!")) {
+                } else if (input.starts_with("!")) {
                     try {
                         debuglog << "received card for trick, parsing\n";
-                        std::string_view sv(e.begin() + 1, e.end());
+                        std::string_view sv(input.begin() + 1, input.end());
                         Card card(sv, true);
                         if (server) {
                             debuglog << "Sending trick to server\n";
                             server->send_msg(
-                                TRICK(all_takes.size() + 1, {card}).get_msg());
+                                TRICK((uint)all_takes.size() + 1, {card})
+                                    .get_msg());
                         } else {
                             debuglog << "Server already closed!!!\n";
                         }

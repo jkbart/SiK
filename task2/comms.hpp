@@ -298,19 +298,20 @@ bool matches(const std::string &e) {
 }
 
 // Functions integrating deals and comms.
-std::vector<std::string> get_player_deal_history(const Deal &deal, uint player) {
+std::vector<std::string> get_player_deal_history(const Deal &deal, 
+                                                 Place::id_t player) {
     std::vector<std::string> ret;
     auto history = deal.get_history();
 
-    uint first_player = history.empty() ? deal.get_first_player() : 
+    Place::id_t first_player = history.empty() ? deal.get_first_player() : 
                                           history[0]._first_player;
 
     ret.push_back(DEAL(deal.get_type(), Place(first_player),
              deal.get_first_hands()[player].list()).get_msg());
 
-    for (std::size_t lew_cnt = 0; lew_cnt < history.size(); lew_cnt++) {
+    for (uint lew_cnt = 0; lew_cnt < (uint)history.size(); lew_cnt++) {
         std::vector<Card> list;
-        for (std::size_t i = 0; i < PLAYER_CNT; i++) {
+        for (Place::id_t i = 0; i < PLAYER_CNT; i++) {
             list.push_back(history[lew_cnt]
                 .state[(i + history[lew_cnt]._first_player) % PLAYER_CNT]);
         }
@@ -322,7 +323,7 @@ std::vector<std::string> get_player_deal_history(const Deal &deal, uint player) 
 
 std::string next_trick(const Deal &deal) {
     std::vector<Card> list;
-    for (std::size_t i = 0; i < deal.get_placed_cnt(); i++) {
+    for (uint i = 0; i < (uint)deal.get_placed_cnt(); i++) {
         list.push_back(
             deal.get_table()[(deal.get_first_player() + i) % PLAYER_CNT]);
     }

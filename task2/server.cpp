@@ -88,7 +88,8 @@ int main(int argc, char* argv[]) {
 
             if (i == argc) throw std::invalid_argument("No timeout value");
             
-            timeout = std::stoul(argv[i]);
+            // std does not have function for unsigned int 
+            timeout = (uint)std::stoul(argv[i]); 
         } else {
             throw std::invalid_argument(
                 "Unknown argument " + std::string(argv[i]));
@@ -143,7 +144,7 @@ int main(int argc, char* argv[]) {
 
     Poller poller;
 
-    int idx_accept = poller.add((int)queue_socket);
+    std::size_t idx_accept = poller.add((int)queue_socket);
     bool accepting = true;
     poller.get(idx_accept).events = POLLIN;
 
@@ -275,41 +276,41 @@ int main(int argc, char* argv[]) {
                     if (deal.is_done()) {
                         TAKEN taken(deal.get_lew_cnt(), deal.get_table(), 
                                     Place(deal.get_loser()));
-                        for (uint i = 0; i < PLAYER_CNT; i++) {
-                            if (players[i].get() != nullptr)
-                                players[i]->send_msg(taken.get_msg());
+                        for (uint j = 0; j < PLAYER_CNT; j++) {
+                            if (players[j].get() != nullptr)
+                                players[j]->send_msg(taken.get_msg());
                         }
 
                         if (deal.end_lew()) {
                             debuglog << "Ending deal" << "\n";
                             auto score = deal.get_scores();
-                            for (uint i = 0; i < PLAYER_CNT; i++) {
-                                total_score[i] += score[i];
+                            for (uint j = 0; j < PLAYER_CNT; j++) {
+                                total_score[j] += score[j];
                             }
 
                             std::vector<std::string> score_msgs = 
                                 {SCORE(score).get_msg(), 
                                 TOTAL(total_score).get_msg()};
 
-                            for (uint i = 0; i < PLAYER_CNT; i++) {
-                                if (players[i].get() == nullptr) continue;
-                                players[i]->send_msgs(score_msgs);
-                                players[i]->reset_timeout();
+                            for (uint j = 0; j < PLAYER_CNT; j++) {
+                                if (players[j].get() == nullptr) continue;
+                                players[j]->send_msgs(score_msgs);
+                                players[j]->reset_timeout();
                             }
 
                             if (game.has_next()) {
                                 debuglog << "Creating new deal" << "\n";
                                 deal = game.get_next();
-                                for (uint i = 0; i < PLAYER_CNT; i++) {
-                                    if (players[i].get() == nullptr) continue;
-                                    players[i]->send_msgs(
-                                        get_player_deal_history(deal, i));
+                                for (uint j = 0; j < PLAYER_CNT; j++) {
+                                    if (players[j].get() == nullptr) continue;
+                                    players[j]->send_msgs(
+                                        get_player_deal_history(deal, j));
                                 }
                             } else {
                                 debuglog << "Ending game, no new deals" << "\n";
-                                for (uint i = 0; i < PLAYER_CNT; i++) {
-                                    if (players[i].get() == nullptr) continue;
-                                    rejectors.insert(std::move(players[i]));
+                                for (uint j = 0; j < PLAYER_CNT; j++) {
+                                    if (players[j].get() == nullptr) continue;
+                                    rejectors.insert(std::move(players[j]));
                                 }
 
                                 // Stopping accepting new connections.
@@ -371,7 +372,7 @@ int main(int argc, char* argv[]) {
 
             bool skip = false;
             bool got_iam = false;
-            uint place = -1; // Initialization to supress compiler warnings.
+            Place::id_t place = -1; // Initialization to supress compiler warnings.
 
             try {
             // Check if got IAM, anserw WRONG to trick and close on wrong msg

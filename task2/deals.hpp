@@ -58,8 +58,8 @@ class Deal {
 
     struct LewState {
         std::vector<Card> state;
-        uint _first_player;
-        uint _loser;
+        Place::id_t _first_player;
+        Place::id_t _loser;
     };
 
   private:
@@ -102,7 +102,7 @@ class Deal {
     // Current lew state
     std::vector<Deck> _hands;
     std::vector<Card> _table;
-    uint _first_player;
+    Place::id_t _first_player;
     uint _placed_cnt = 0;
     uint _lew_counter = 0;
 
@@ -125,7 +125,7 @@ class Deal {
 
     uint get_type() const { return _deal; }
     uint get_lew_cnt() const { return _lew_counter + 1; }
-    uint get_first_player() const { return _first_player; }
+    Place::id_t get_first_player() const { return _first_player; }
     uint get_placed_cnt() const { return _placed_cnt; }
 
     std::vector<Card> get_table() const { return _table; }
@@ -134,12 +134,12 @@ class Deal {
     std::vector<Deck> get_first_hands() const { return _first_hands; }
     std::vector<LewState> get_history() const { return _history; }
 
-    uint get_next_player() const { 
+    Place::id_t get_next_player() const { 
         return (_first_player + _placed_cnt) % PLAYER_CNT; 
     }
 
 
-    bool put(uint player, Card card) {
+    bool put(Place::id_t player, Card card) {
         if (_placed_cnt >= PLAYER_CNT ||
             player != (_first_player + _placed_cnt) % PLAYER_CNT) {
             debuglog << "Gracz " << player 
@@ -170,10 +170,10 @@ class Deal {
         return _placed_cnt == PLAYER_CNT;
     }
 
-    uint get_loser() const {
-        uint loser = _first_player;
-        uint value = _table[_first_player].get_value();
-        uint color = _table[_first_player].get_color();
+    std::size_t get_loser() const {
+        std::size_t loser = _first_player;
+        std::size_t value = _table[_first_player].get_value();
+        std::size_t color = _table[_first_player].get_color();
 
         for (std::size_t i = 0; i < _table.size(); i++) {
             if (color == _table[i].get_color() && 
