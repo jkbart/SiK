@@ -43,7 +43,6 @@ std::string getname(int socket,
     sockaddr_storage st;
     socklen_t len;
 
-    std::cout << "getname " << socket << "\n";
     int sys_call_ret = f(socket, (sockaddr*) &st, &len);
     if (sys_call_ret != 0) {
         throw syscall_error("get...name", sys_call_ret);

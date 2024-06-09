@@ -9,16 +9,16 @@ target: serwer klient
 debug: serwer_debug klient_debug
 
 serwer_debug: server.cpp
-	$(CPP) $(CPPBASIC) $(CPPEXTRA) $(DEBUG) $< -o serwer_debug
+	$(CPP) $(CPPBASIC) $(CPPEXTRA) $(DEBUG) $< -o kierki-serwer-debug
 
 klient_debug: client.cpp
-	$(CPP) $(CPPBASIC) $(CPPEXTRA) $(DEBUG) $< -o klient_debug
+	$(CPP) $(CPPBASIC) $(CPPEXTRA) $(DEBUG) $< -o kierki-klient-debug
 
 serwer: server.cpp
-	$(CPP) $(CPPBASIC) $< -o $@
+	$(CPP) $(CPPBASIC) $< -o kierki-serwer
 
 klient: client.cpp
-	$(CPP) $(CPPBASIC) $< -o $@
+	$(CPP) $(CPPBASIC) $< -o kierki-klient
 
 clean:
-	rm -f klient serwer klient_debug serwer_debug
+	rm -f kierki-serwer kierki-klient kierki-serwer-debug kierki-klient-debug

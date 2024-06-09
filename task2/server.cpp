@@ -105,7 +105,7 @@ int main(int argc, char* argv[]) {
     GameRun game(file_s);
     if (!game.has_next()) {
         debuglog << "File has no deals!" << "\n";
-        return 0;
+        return 1;
     }
 
     // Converting timeout from s to ms.
