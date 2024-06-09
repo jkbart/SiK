@@ -139,7 +139,7 @@ int main(int argc, char* argv[]) {
         throw syscall_error("listen", syscall_ret);
     }
 
-    debuglog << "Server listening on address: " 
+    debuglog << "Server listening on address: "
              << NET::getsockname(queue_socket) << "\n";
 
     Poller poller;
@@ -187,13 +187,15 @@ int main(int argc, char* argv[]) {
                 fcntl(fd, F_SETFL, O_NONBLOCK);
 
                 if (active_player_cnt == PLAYER_CNT) {
-                    debuglog << "New client, moving to closer" << "\n";
+                    debuglog << "New client, moving to closer. fd="
+                              << fd << "\n";
                     msnger_ptr messenger(new MessengerBI(fd, poller,
                         NET::getsockname(fd), NET::getpeername(fd), logger));
                     messenger->send_msg(BUSY().get_msg());
                     closer.insert(std::move(messenger));
                 } else {
-                    debuglog << "New client, waiting for place" << "\n";
+                    debuglog << "New client, waiting for place. fd="
+                             << fd << "\n";
                     msnger_ptr messenger(new MessengerBI(fd, poller,
                         NET::getsockname(fd), NET::getpeername(fd), logger));
                     messenger->set_timeout(timeout);

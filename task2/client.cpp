@@ -101,7 +101,7 @@ int main(int argc, char* argv[]) {
     int server_socket = NET::connect(host, port, domain);
     debuglog << "Connected!\n";
 
-    bool can_end_now = true;
+    bool can_end_now = false; // At least one deal has to be played.
     Place my_place(place_s);
     Deck my_deck;
     std::vector<TAKEN> all_takes;
@@ -147,6 +147,7 @@ int main(int argc, char* argv[]) {
                 if (matches<BUSY>(msg)) {
                     debuglog << "matched to BUSY" << "\n";
                     is_closing = true;
+                    can_end_now = true;
                     ui_text = BUSY(msg).getUI();
                 } else if (matches<DEAL>(msg)) {
                     debuglog << "matched to DEAL" << "\n";

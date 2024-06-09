@@ -27,19 +27,13 @@ std::string time_printer() {
     return time + "ms";
 }
 
-
-// Clang doesnt have std::source_location. 
-// Im using clang for error detection in editor and this silences the errors.
-#if (defined(__GNUC__) && !defined(__clang__))
-// Source: https://quuxplusone.github.io/blog/2020/02/12/source-location/
-struct DBGStream {
+struct LogStream {
     const std::string name;
-    DBGStream(std::string name_) : name(name_) {}
+    LogStream(std::string name_) : name(name_) {}
 
     struct Annotated {
-        /*IMPLICIT*/ Annotated(DBGStream& s,
-                  std::source_location loc = std::source_location::current())
-        {
+        Annotated(LogStream& s, std::source_location loc = 
+                                    std::source_location::current()) {
             *this << "[" << s.name << "][" 
                   << time_printer() << "][" << std::setfill('.') 
                   << std::setw(11) << loc.file_name() << ":" 
@@ -51,36 +45,18 @@ struct DBGStream {
     friend Annotated operator<<(Annotated a, T msg) {
         if constexpr (!debug) {
             return a;
-        }
-        std::clog << msg;
-        return a;
-    }
-};
-#else
-struct DBGStream {
-    const std::string name;
-    DBGStream(std::string name_) : name(name_) {}
-
-    struct Annotated {
-        /*IMPLICIT*/ Annotated(DBGStream& s)
-        {
-            *this << "[" << s.name << "][" 
-                  << time_printer() << "]";
-        }
-    };
-
-    template<class T>
-    friend Annotated operator<<(Annotated a, T msg) {
-        if constexpr (!debug) {
+        } else {
+            std::clog << msg;
             return a;
         }
-        std::clog << msg;
-        return a;
     }
 };
-#endif
 
 // Global logging stream.
-static DBGStream debuglog("DBG");
+static LogStream debuglog_("DBG");
+
+// Macro to fully stop evaluating functions in LogStream when not debugging.
+#define debuglog if constexpr (debug) debuglog_
+
 } // namespace DEBUG_NS
 #endif /* DEBUG_HPP */

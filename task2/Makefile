@@ -9,10 +9,10 @@ target: serwer klient
 debug: serwer_debug klient_debug
 
 serwer_debug: server.cpp
-	$(CPP) $(CPPBASIC) $(CPPEXTRA) $(DEBUG) $< -o serwer
+	$(CPP) $(CPPBASIC) $(CPPEXTRA) $(DEBUG) $< -o serwer_debug
 
 klient_debug: client.cpp
-	$(CPP) $(CPPBASIC) $(CPPEXTRA) $(DEBUG) $< -o klient
+	$(CPP) $(CPPBASIC) $(CPPEXTRA) $(DEBUG) $< -o klient_debug
 
 serwer: server.cpp
 	$(CPP) $(CPPBASIC) $< -o $@
