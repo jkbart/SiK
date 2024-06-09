@@ -17,10 +17,11 @@
 
 class COMMS {
   protected:
-    const std::string _msg;
-    COMMS(std::string msg) : _msg(msg) {} // Making class abstract.
-    inline static std::string_view rem_prefix(std::string &msg, const std::string &prefix) {
-        std::string_view ans = msg;
+    const std::string msg;
+    COMMS(std::string msg_) : msg(msg_) {} // Making class abstract.
+    inline static std::string_view rem_prefix(std::string &msg_, 
+                                              const std::string &prefix) {
+        std::string_view ans = msg_;
 
         if (!ans.starts_with(prefix))
             throw parsing_error(ans, prefix, false);
@@ -30,39 +31,36 @@ class COMMS {
     }
 
   public:
-    std::string get_msg() const {
-        return _msg;
-    }
-
+    std::string get_msg() const { return msg; }
     virtual std::string getUI() const = 0;
-
-    // virtual std::string_view get_prefix() const = 0;
 
     virtual ~COMMS() {};
 };
 
 class IAM : public COMMS {
   public:
-    inline const static std::string _prefix = "IAM";
-    const Place _place;
+    inline const static std::string prefix = "IAM";
+    const Place place;
 
-    IAM(Place place) : 
-        COMMS(_prefix + (std::string)place), _place(place) {}
+    IAM(Place place_) : 
+        COMMS(prefix + (std::string)place_), place(place_) {}
 
-    IAM(std::string msg, std::string_view text) :
-        COMMS(msg), _place(text, true) {}
+    IAM(std::string msg_, std::string_view text) :
+        COMMS(msg_), place(text, true) {}
 
-    IAM(std::string msg) : IAM(msg, rem_prefix(msg, _prefix)) {}
+    IAM(std::string msg_) : IAM(msg_, rem_prefix(msg_, prefix)) {}
 
+    // This function is undefined in moodle and unused.
     std::string getUI() const {
-        return "New player wants to be placed at " + (std::string)Place(_place);
+        return "New player wants to be placed at " + 
+            (std::string)Place(place) + ".";
     }
 };
 
 class BUSY : public COMMS {
   public:
-    inline const static std::string _prefix = "BUSY";
-    const std::vector<Place> _places;
+    inline const static std::string prefix = "BUSY";
+    const std::vector<Place> places;
 
     std::vector<Place> all_busy() {
         std::vector<Place> ret;
@@ -73,44 +71,44 @@ class BUSY : public COMMS {
     }
 
     BUSY() : 
-        COMMS(_prefix + list_to_string(all_busy())), _places(all_busy()) {}
+        COMMS(prefix + list_to_string(all_busy())), places(all_busy()) {}
 
-    BUSY(std::vector<Place> places) : 
-        COMMS(_prefix + list_to_string(places)), _places(places) {}
+    BUSY(std::vector<Place> places_) : 
+        COMMS(prefix + list_to_string(places_)), places(places_) {}
 
-    BUSY(std::string msg, std::string_view text) : 
-        COMMS(msg), _places(parse_list<Place>(text, true)) {}
+    BUSY(std::string msg_, std::string_view text) : 
+        COMMS(msg_), places(parse_list<Place>(text, true)) {}
 
-    BUSY(std::string msg) : BUSY(msg, rem_prefix(msg, _prefix)) {}
+    BUSY(std::string msg_) : BUSY(msg_, rem_prefix(msg_, prefix)) {}
 
     std::string getUI() const {
         return "Place busy, list of busy places received: " + 
-            list_to_string(_places, ", ");
+            list_to_string(places, ", ") + ".";
     }
 };
 
 
 class DEAL : public COMMS {
   public:
-    inline const static std::string _prefix = "DEAL";
-    const uint _deal;
-    const Place _place;
-    const std::vector<Card> _cards;
+    inline const static std::string prefix = "DEAL";
+    const uint deal;
+    const Place place;
+    const std::vector<Card> cards;
 
-    DEAL(uint deal, Place place, std::vector<Card> cards) : 
-        COMMS(_prefix + Deal::deals[deal] + (std::string)place + 
-            list_to_string(cards)), _deal(deal), _place(place), _cards(cards) {}
+    DEAL(uint deal_, Place place_, std::vector<Card> cards_) : 
+        COMMS(prefix + Deal::deals[deal_] + (std::string)place_ + 
+            list_to_string(cards_)), deal(deal_), place(place_), cards(cards_) {}
 
-    DEAL(std::string msg, std::string_view text) :
-        COMMS(msg), _deal(Deal::parse(text)), _place(text), 
-        _cards(parse_list<Card>(text, true)) {}
+    DEAL(std::string msg_, std::string_view text) :
+        COMMS(msg_), deal(Deal::parse(text)), place(text), 
+        cards(parse_list<Card>(text, true)) {}
 
-    DEAL(std::string msg) : DEAL(msg, rem_prefix(msg, _prefix)) {}
+    DEAL(std::string msg_) : DEAL(msg_, rem_prefix(msg_, prefix)) {}
 
     std::string getUI() const {
-        return "New deal " + std::to_string(_deal) + ": starting place " + 
-            (std::string)_place + ", your cards: " + 
-            list_to_string(_cards, ", ") + ".";
+        return "New deal " + Deal::deals[deal] + ": staring place " + 
+            (std::string)place + ", your cards: " + 
+            list_to_string(cards, ", ") + ".";
     }
 };
 
@@ -134,76 +132,77 @@ uint parse_number_with_maybe_card_behind(std::string_view &text) {
 
 class TRICK : public COMMS {
   public:
-    inline const static std::string _prefix = "TRICK";
-    const uint _lew_cnt;
-    const std::vector<Card> _cards;
+    inline const static std::string prefix = "TRICK";
+    const uint lew_cnt;
+    const std::vector<Card> cards;
 
-    TRICK(uint lew_cnt, std::vector<Card> cards) : 
-        COMMS(_prefix + std::to_string(lew_cnt) + list_to_string(cards)),
-        _lew_cnt(lew_cnt), _cards(cards) {}
+    TRICK(uint lew_cnt_, std::vector<Card> cards_) : 
+        COMMS(prefix + std::to_string(lew_cnt_) + list_to_string(cards_)),
+        lew_cnt(lew_cnt_), cards(cards_) {}
 
-    TRICK(std::string msg, std::string_view text) : COMMS(msg), 
-        _lew_cnt(parse_number_with_maybe_card_behind(text)), 
-        _cards(parse_list<Card>(text, true)) {}
+    TRICK(std::string msg_, std::string_view text) : COMMS(msg_), 
+        lew_cnt(parse_number_with_maybe_card_behind(text)), 
+        cards(parse_list<Card>(text, true)) {}
 
-    TRICK(std::string msg) : TRICK(msg, rem_prefix(msg, _prefix)) {}
+    TRICK(std::string msg_) : TRICK(msg_, rem_prefix(msg_, prefix)) {}
 
     std::string getUI() const {
-        return "Trick: (" + std::to_string(_lew_cnt) + ") " + 
-            list_to_string(_cards, ", ");
+        return "Trick: (" + std::to_string(lew_cnt) + ") " + 
+            list_to_string(cards, ", ");
     }
 };
 
 class WRONG : public COMMS {
   public:
-    inline const static std::string _prefix = "WRONG";
-    const uint _lew_cnt;
+    inline const static std::string prefix = "WRONG";
+    const uint lew_cnt;
 
-    WRONG(uint lew_cnt) : 
-        COMMS(_prefix + std::to_string(lew_cnt)),
-        _lew_cnt(lew_cnt) {}
+    WRONG(uint lew_cnt_) : 
+        COMMS(prefix + std::to_string(lew_cnt_)),
+        lew_cnt(lew_cnt_) {}
 
-    WRONG(std::string msg, std::string_view text) : COMMS(msg), 
-        _lew_cnt(parse_number_with_maybe_card_behind(text)) {}
+    WRONG(std::string msg_, std::string_view text) : COMMS(msg_), 
+        lew_cnt(parse_number_with_maybe_card_behind(text)) {}
 
-    WRONG(std::string msg) : WRONG(msg, rem_prefix(msg, _prefix)) {}
+    WRONG(std::string msg_) : WRONG(msg_, rem_prefix(msg_, prefix)) {}
 
     std::string getUI() const {
-        return "Wrong message received in trick " + std::to_string(_lew_cnt) + 
+        return "Wrong message received in trick " + std::to_string(lew_cnt) + 
             ".";
     }
 };
 
 class TAKEN : public COMMS {
   public:
-    inline const static std::string _prefix = "TAKEN";
-    const uint _lew_cnt;
-    const std::vector<Card> _cards;
-    const Place _place;
+    inline const static std::string prefix = "TAKEN";
+    const uint lew_cnt;
+    const std::vector<Card> cards;
+    const Place place;
 
-    TAKEN(uint lew_cnt, std::vector<Card> cards, Place place) : 
-        COMMS(_prefix + std::to_string(lew_cnt) + list_to_string(cards) + 
-            (std::string)place), 
-        _lew_cnt(lew_cnt), _cards(cards), _place(place) {
-        if (_cards.size() != PLAYER_CNT) {
+    TAKEN(uint lew_cnt_, std::vector<Card> cards_, Place place_) : 
+        COMMS(prefix + std::to_string(lew_cnt_) + list_to_string(cards_) + 
+            (std::string)place_), 
+        lew_cnt(lew_cnt_), cards(cards_), place(place_) {
+        if (cards.size() != PLAYER_CNT) {
             throw game_error("wrong number of cards in TAKEN");
         }
 
     }
 
-    TAKEN(std::string msg, std::string_view text) : COMMS(msg), 
-        _lew_cnt(parse_number_with_maybe_card_behind(text)),
-        _cards(parse_list<Card>(text)), _place(text, true) {
-        if (_cards.size() != PLAYER_CNT) {
+    TAKEN(std::string msg_, std::string_view text) : COMMS(msg_), 
+        lew_cnt(parse_number_with_maybe_card_behind(text)),
+        cards(parse_list<Card>(text)), place(text, true) {
+        if (cards.size() != PLAYER_CNT) {
             throw game_error("wrong number of cards in TAKEN");
         }
     }
 
-    TAKEN(std::string msg) : TAKEN(msg, rem_prefix(msg, _prefix)) {}
+    TAKEN(std::string msg_) : TAKEN(msg_, rem_prefix(msg_, prefix)) {}
 
     std::string getUI() const {
-        return "A trick " + std::to_string(_lew_cnt) + " is taken by " + 
-            (std::string)_place + list_to_string(_cards, ", ");
+        return "A trick " + std::to_string(lew_cnt) + " is taken by " + 
+            (std::string)place + ", cards " + list_to_string(cards, ", ") + 
+            ".";
     }
 };
 
@@ -249,50 +248,50 @@ std::string scores_to_string_UI(const std::vector<uint>& scores) {
 
 class SCORE : public COMMS {
   public:
-    inline const static std::string _prefix = "SCORE";
-    const std::vector<uint> _scores;
+    inline const static std::string prefix = "SCORE";
+    const std::vector<uint> scores;
 
-    SCORE(std::vector<uint> scores) : 
-        COMMS(_prefix + scores_to_string(scores)), _scores(scores) {}
+    SCORE(std::vector<uint> scores_) : 
+        COMMS(prefix + scores_to_string(scores_)), scores(scores_) {}
 
-    SCORE(std::string msg, std::string_view text) : COMMS(msg), 
-        _scores(get_scores(text, true)) {}
+    SCORE(std::string msg_, std::string_view text) : COMMS(msg_), 
+        scores(get_scores(text, true)) {}
 
-    SCORE(std::string msg) : SCORE(msg, rem_prefix(msg, _prefix)) {}
+    SCORE(std::string msg_) : SCORE(msg_, rem_prefix(msg_, prefix)) {}
 
     std::string getUI() const {
-        return "The scores are:\n" + scores_to_string_UI(_scores);
+        return "The scores are:\n" + scores_to_string_UI(scores);
     }
 };
 
 class TOTAL : public COMMS {
   public:
-    inline const static std::string _prefix = "TOTAL";
-    const std::vector<uint> _scores;
+    inline const static std::string prefix = "TOTAL";
+    const std::vector<uint> scores;
 
-    TOTAL(std::vector<uint> scores) : 
-        COMMS(_prefix + scores_to_string(scores)), _scores(scores) {}
+    TOTAL(std::vector<uint> scores_) : 
+        COMMS(prefix + scores_to_string(scores_)), scores(scores_) {}
 
-    TOTAL(std::string msg, std::string_view text) : COMMS(msg), 
-        _scores(get_scores(text, true)) {}
+    TOTAL(std::string msg_, std::string_view text) : COMMS(msg_), 
+        scores(get_scores(text, true)) {}
 
-    TOTAL(std::string msg) : 
-        TOTAL(msg, rem_prefix(msg, _prefix)) {}
+    TOTAL(std::string msg_) : 
+        TOTAL(msg_, rem_prefix(msg_, prefix)) {}
 
     std::string getUI() const {
-        return "The total scores are:\n" + scores_to_string_UI(_scores);
+        return "The total scores are:\n" + scores_to_string_UI(scores);
     }
 };
 
 // Helper functions
 template<class T>
-requires std::derived_from<T, COMMS>
+    requires std::derived_from<T, COMMS>
 std::string get_prefix() {
-    return T::_prefix;
+    return T::prefix;
 }
 
 template<class T>
-requires std::derived_from<T, COMMS>
+    requires std::derived_from<T, COMMS>
 bool matches(const std::string &e) {
     return e.starts_with(get_prefix<T>());
 }
@@ -304,7 +303,7 @@ std::vector<std::string> get_player_deal_history(const Deal &deal,
     auto history = deal.get_history();
 
     Place::id_t first_player = history.empty() ? deal.get_first_player() : 
-                                          history[0]._first_player;
+                                          history[0].first_player;
 
     ret.push_back(DEAL(deal.get_type(), Place(first_player),
              deal.get_first_hands()[player].list()).get_msg());
@@ -313,9 +312,9 @@ std::vector<std::string> get_player_deal_history(const Deal &deal,
         std::vector<Card> list;
         for (Place::id_t i = 0; i < PLAYER_CNT; i++) {
             list.push_back(history[lew_cnt]
-                .state[(i + history[lew_cnt]._first_player) % PLAYER_CNT]);
+                .state[(i + history[lew_cnt].first_player) % PLAYER_CNT]);
         }
-        ret.push_back(TAKEN(lew_cnt + 1, list, history[lew_cnt]._loser)
+        ret.push_back(TAKEN(lew_cnt + 1, list, history[lew_cnt].loser)
                            .get_msg());
     }
     return ret;
@@ -323,7 +322,7 @@ std::vector<std::string> get_player_deal_history(const Deal &deal,
 
 std::string next_trick(const Deal &deal) {
     std::vector<Card> list;
-    for (uint i = 0; i < (uint)deal.get_placed_cnt(); i++) {
+    for (Place::id_t i = 0; i < deal.get_placed_cnt(); i++) {
         list.push_back(
             deal.get_table()[(deal.get_first_player() + i) % PLAYER_CNT]);
     }

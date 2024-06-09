@@ -148,15 +148,17 @@ int main(int argc, char* argv[]) {
     bool accepting = true;
     poller.get(idx_accept).events = POLLIN;
 
+    // Messenger for every session.
     using msnger_ptr = std::unique_ptr<MessengerBI>;
 
     int8_t active_player_cnt = 0;
     std::vector<msnger_ptr> players(PLAYER_CNT);
-    std::set<msnger_ptr> closer; // Just sending data and closing.
-    std::set<msnger_ptr> waiting_for_place;
+    std::set<msnger_ptr> closer; // Just sending data and closing after.
+    std::set<msnger_ptr> waiting_for_place; // Connections waiting for IAM
 
     Deal deal = game.get_next();
     std::vector<uint> total_score(PLAYER_CNT, 0);
+    // Logs info about internet traffic with server.
     std::shared_ptr<Reporter> logger(
         new Reporter(dup_fd(STDOUT_FILENO), poller));
 
@@ -173,7 +175,6 @@ int main(int argc, char* argv[]) {
             logger.reset();
             break;
         }
-        // debuglog << "Poll loop: " << ret << "\n";
 
         // GROUP 1
         // Handle new connections
@@ -186,7 +187,7 @@ int main(int argc, char* argv[]) {
                 fcntl(fd, F_SETFL, O_NONBLOCK);
 
                 if (active_player_cnt == PLAYER_CNT) {
-                    debuglog << "New client, moving to closers" << "\n";
+                    debuglog << "New client, moving to closer" << "\n";
                     msnger_ptr messenger(new MessengerBI(fd, poller,
                         NET::getsockname(fd), NET::getpeername(fd), logger));
                     messenger->send_msg(BUSY().get_msg());
@@ -213,6 +214,7 @@ int main(int argc, char* argv[]) {
             auto it = it_main++;
             bool skip = false;
 
+            try {
             // All incoming messeges are unwelcome.
             for (auto e : (*it)->run()) {
                 debuglog << "Closer got unwanted messege, closing" << "\n";
@@ -236,31 +238,48 @@ int main(int argc, char* argv[]) {
                 closer.erase(it);
                 continue;
             }
+            } catch (std::exception &e) {
+                debuglog << "Closer got exception, closing" << "\n";
+                debuglog << e.what() << "\n";
+                closer.erase(it);
+            }
         }
+
+        auto close_player = [&](int i) {
+            players[i].reset();
+            active_player_cnt--;
+            for (auto &e : players) {
+                if (e) e->unset_flags(POLLIN | POLLOUT);
+            }
+        };
 
         // GROUP 3
         // Handle current players
         debuglog << "GROUP 3: handling current players\n";
         for (uint i = 0; i < PLAYER_CNT; i++) {
-            if (players[i].get() == nullptr) continue;
+            if (players[i] == nullptr) continue;
+            if (active_player_cnt != PLAYER_CNT) continue;
+            debuglog << "timeout left: " << players[i]->get_timeout() << "\n";
 
             try {
             for (auto msg : players[i]->run()) {
                 if (!matches<TRICK>(msg)) {
                     debuglog << "Player got not TRICK msg, closing" << "\n";
-                    players[i].reset();
-                    active_player_cnt--;
+                    // players[i].reset();
+                    // active_player_cnt--;
+                    close_player(i);
                     break;
                 }
 
                 TRICK trick(msg);
-                if (trick._cards.size() != 1) {
+                if (trick.cards.size() != 1) {
                     debuglog << "Player got trick with not one card, closing\n";
-                    players[i].reset();
-                    active_player_cnt--;
+                    // players[i].reset();
+                    // active_player_cnt--;
+                    close_player(i);
                     break;
                 } else if (active_player_cnt != PLAYER_CNT ||
-                            !deal.put(i, trick._cards[0])) {
+                            !deal.put(i, trick.cards[0])) {
                     if (active_player_cnt != PLAYER_CNT) {
                         debuglog << "Not all players are connected, WRONG\n";
                     } else {
@@ -349,15 +368,17 @@ int main(int argc, char* argv[]) {
             } catch (std::exception &e) {
                 debuglog << "Player got msg in wrong format, closing: " 
                          << e.what() << "\n";
-                players[i].reset();
-                active_player_cnt--;
+                // players[i].reset();
+                // active_player_cnt--;
+                close_player(i);
             }
 
             if (players[i] && players[i]->closed()) {
                 debuglog << "Player " << (std::string)Place(i) 
                          << " end closed, closing as well\n";
-                players[i].reset();
-                active_player_cnt--;
+                // players[i].reset();
+                // active_player_cnt--;
+                close_player(i);
                 continue;
             }
         }
@@ -378,9 +399,15 @@ int main(int argc, char* argv[]) {
             // Check if got IAM, anserw WRONG to trick and close on wrong msg
             for (auto e : (*it)->run()) {
                 if (matches<TRICK>(e)) {
-                    (*it)->send_msg(
-                        WRONG(deal.get_lew_cnt())
-                            .get_msg());
+                    // Depends on intrpretation. Leaving for now.
+                    // (*it)->send_msg(
+                    //     WRONG(deal.get_lew_cnt())
+                    //         .get_msg());
+
+                    debuglog << "WFP got TRICK, closing" << "\n";
+                    waiting_for_place.erase(it);
+                    skip = true;
+                    break;
                 } else if (matches<IAM>(e)) {
                     if (got_iam) {
                         debuglog << "WFP got second iam, closing" << "\n";
@@ -390,7 +417,7 @@ int main(int argc, char* argv[]) {
                     }
                     got_iam = true;
                     IAM iam(e);
-                    place = iam._place;
+                    place = iam.place;
                 } else {
                     debuglog << "WFP got unwanted msg, closing" << "\n";
                     waiting_for_place.erase(it);
@@ -436,14 +463,18 @@ int main(int argc, char* argv[]) {
                     debuglog << "Succefully sended msgs\n";
                     active_player_cnt++;
                     players[place]->reset_timeout();
+                    players[place]->unset_flags(POLLIN | POLLOUT);
 
                     // Sending trick messege to next player.
                     if (active_player_cnt == PLAYER_CNT 
                         // && !deal.is_done() // Is this && necesary? TODO
-                        ) { 
+                        ) {
+                        for (auto &e : players) {
+                            if (e) e->reset_flags();
+                        }
+
                         players[deal.get_next_player()]->
-                            send_if_no_timeout(next_trick(deal));
-                        players[deal.get_next_player()]->set_timeout(timeout);
+                            send_if_no_timeout(next_trick(deal), timeout);
                     }
                 }
             } else if (!got_iam && (*it)->did_timeout()) {

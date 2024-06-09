@@ -86,19 +86,22 @@ int main(int argc, char* argv[]) {
         } else if (!strcmp(argv[i], "-a")) {
             is_automatic = true;
         } else {
-            throw std::invalid_argument("Unknown argument " + std::string(argv[i]));
+            throw std::invalid_argument("Unknown argument " + 
+                                        std::string(argv[i]));
         }
     }
 
     if (check_args != (1 | 1<<1 | 1<<2)) {
-        throw std::invalid_argument("Not all args were specified, required: -h <host> -p <port> -46 (ipv4/ipv6) -NESW (statring place)");
+        throw std::invalid_argument(
+            std::string("Not all args were specified, options: -h <host>") +
+            std::string(" -p <port> -46 (ipv4/ipv6) -NESW (statring place)"));
     }
 
     // Connect to server.
     int server_socket = NET::connect(host, port, domain);
     debuglog << "Connected!\n";
 
-
+    bool can_end_now = true;
     Place my_place(place_s);
     Deck my_deck;
     std::vector<TAKEN> all_takes;
@@ -120,6 +123,7 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<MessengerOUT> handlerOUT(new MessengerOUT(
                     dup_fd(STDOUT_FILENO), poller, "", "", nullptr, "\n"));
 
+    bool finish_this_deal_auto = false; // debugging variable.
     while (poller.size()) {
         int ret = poller.run();
         if (ret < 0) {
@@ -137,60 +141,67 @@ int main(int argc, char* argv[]) {
                 debuglog << "Client recvd: " << std::quoted(msg) << "\n";
                 if (is_closing) break;
                 try {
-                std::unique_ptr<COMMS> comm;
+                std::string ui_text;
 
                 // Start of handling diffrent messeges.
                 if (matches<BUSY>(msg)) {
                     debuglog << "matched to BUSY" << "\n";
                     is_closing = true;
-                    comm = std::make_unique<BUSY>(msg);
+                    ui_text = BUSY(msg).getUI();
                 } else if (matches<DEAL>(msg)) {
                     debuglog << "matched to DEAL" << "\n";
-                    my_deck = DEAL(msg)._cards;
+                    my_deck = DEAL(msg).cards;
                     all_takes.clear();
-                    comm = std::make_unique<DEAL>(msg);
+                    ui_text = DEAL(msg).getUI();
+                    can_end_now = false;
                 } else if (matches<TRICK>(msg)) {
                     debuglog << "matched to TRICK" << "\n";
                     TRICK trick(msg);
-                    if (trick._lew_cnt != all_takes.size() + 1) {
+                    if (trick.lew_cnt != all_takes.size() + 1) {
                         debuglog << "Not current lew, skipping\n";
                         continue; // Not current lew.
                     }
 
-                    if (is_automatic) {
-                        server->send_msg(TRICK(trick._lew_cnt, 
-                            {autopicker(my_deck, trick._cards)}).get_msg());
+                    if (is_automatic || finish_this_deal_auto) {
+                        if (server)
+                            server->send_msg(TRICK(trick.lew_cnt, 
+                                {autopicker(my_deck, trick.cards)}).get_msg());
                     } else {
+                        ui_text = TRICK(msg).getUI() +
+                            "\nAvailable: " + 
+                            list_to_string(my_deck.list(), ", ");
                         // waits_for_trick = true;
                     }
-                    comm = std::make_unique<TRICK>(msg);
                 } else if (matches<WRONG>(msg)) {
                     debuglog << "matched to WRONG" << "\n";
-                    comm = std::make_unique<WRONG>(msg);
+                    ui_text = WRONG(msg).getUI();
                 } else if (matches<TAKEN>(msg)) {
                     debuglog << "matched to TAKEN" << "\n";
                     TAKEN taken(msg);
-                    if (taken._lew_cnt == all_takes.size() + 1) {
+                    if (taken.lew_cnt == all_takes.size() + 1) {
                         all_takes.push_back(TAKEN(msg));
-                        autoremover(my_deck, TAKEN(msg)._cards);
-                        comm = std::make_unique<TAKEN>(msg);
+                        autoremover(my_deck, TAKEN(msg).cards);
+                        ui_text = TAKEN(msg).getUI();
                     } else {
                         debuglog << "TAKEN was not from last lew\n";
                     }
                 } else if (matches<SCORE>(msg)) {
                     debuglog << "matched to SCORE" << "\n";
-                    comm = std::make_unique<SCORE>(msg);
+                    ui_text = SCORE(msg).getUI();
                 } else if (matches<TOTAL>(msg)) {
                     debuglog << "matched to TOTAL" << "\n";
-                    comm = std::make_unique<TOTAL>(msg);
+                    ui_text = TOTAL(msg).getUI();
+                    can_end_now = true;
+                    // finish_this_deal_auto = false;
                 } else  {
                     // Ignore wrong messeges.
+                    continue;
                 }
                 // End of handling diffrent messeges.
 
                 if (!is_automatic) {
                     debuglog << "printing UI\n";
-                    handlerOUT->send_msg(comm->getUI());
+                    handlerOUT->send_msg(ui_text);
                 }
 
                 } catch (std::exception &e) {
@@ -222,7 +233,8 @@ int main(int argc, char* argv[]) {
         if (handlerIN) {
             for (auto input : handlerIN->runIN()) {
                 if (is_automatic) {
-                    throw std::runtime_error("Automatic player received input on STDIN");
+                    throw std::runtime_error(
+                        "Automatic player received input on STDIN");
                 }
 
                 if (input == "cards") {
@@ -230,10 +242,9 @@ int main(int argc, char* argv[]) {
                         list_to_string(my_deck.list(), ", "));
                 } else if (input == "tricks") {
                     for (auto &take : all_takes) {
-                        if (take._place == my_place) {
+                        // if (take.place == my_place) // Unclear part in task.
                             handlerOUT->send_msg(
-                                list_to_string(take._cards, ", "));
-                        }
+                                list_to_string(take.cards, ", "));
                     }
                 } else if (input.starts_with("!")) {
                     try {
@@ -252,12 +263,23 @@ int main(int argc, char* argv[]) {
                         debuglog << e.what() << "\n";
                     }
                 } else {
+                    if constexpr (debug) { // Debug commands
+                        if (input == "make me auto") {
+                            finish_this_deal_auto = true;
+                        }
+                    }
                     // Ignore other messeges?
                 }
             }
         }
 
         poller.print_debug();
+    }
+    if (can_end_now) {
+        return 0;
+    } else {
+        std::cerr << "Did not run to an end. (for more info compile with -DDEBUG)\n";
+        return 1;
     }
     } catch (std::exception &e) {
         std::cerr << "[ERROR] " << e.what() << "\n";

@@ -1,8 +1,6 @@
 #ifndef COMMON_HPP
 #define COMMON_HPP
 
-#include "exceptions.hpp"
-
 #include <vector>
 #include <string>
 #include <string_view>
@@ -15,20 +13,21 @@
 #include <limits.h>
 #include <cstddef>
 
+#include "exceptions.hpp"
 #include "debug.hpp"
 using namespace DEBUG_NS;
 
-
+// Global random generator.
 std::mt19937 gen{std::random_device{}()};
 
 // Helper functions for parsing.
 bool matches(const std::vector<std::string> &range, std::string_view &text, 
     bool full_match = false) {
-    for (std::size_t i = 0; i < range.size(); i++) {
-        if (text.starts_with(range[i])) {
-            if (full_match && text.size() != range[i].size())
+    for (const auto &e : range) {
+        if (text.starts_with(e)) {
+            if (full_match && text.size() != e.size())
                 break;
-            text.remove_prefix(range[i].size());
+            text.remove_prefix(e.size());
             return true;
         }
     }
@@ -41,9 +40,8 @@ std::vector<T> parse_list(std::string_view &text, bool full_match = false) {
     std::vector<T> ret;
 
     while (!text.empty()) {
-        if (!full_match && !T::valid(text)) {
+        if (!full_match && !T::valid(text))
             return ret;
-        }
 
         T last(text);
 
@@ -96,16 +94,14 @@ template<class T>
 std::string list_to_string(const std::vector<T> &list, std::string delim = "") {
     std::string ans = "";
     for (std::size_t i = 0; i < list.size(); i++) {
+        if (i != 0) ans += delim;
         ans += std::to_string(list[i]);
-        if (i != list.size() - 1) {
-            ans += delim;
-        }
     }
     return ans;
 }
 
-auto parser(const std::vector<std::string> &range, std::string_view &text, 
-    bool full_match = false) {
+std::size_t parser(const std::vector<std::string> &range, std::string_view &text, 
+            bool full_match = false) {
     for (std::size_t i = 0; i < range.size(); i++) {
         if (text.starts_with(range[i])) {
             if (full_match && text.size() != range[i].size())
@@ -141,20 +137,20 @@ class Card {
     };
 
   private:
-    id_t _value, _color;
+    id_t value, color;
 
   public:
-    Card(id_t value, id_t color) : _value(value), _color(color) {}
+    Card(id_t value_, id_t color_) : value(value_), color(color_) {}
     Card(std::string_view &text, bool full_match = false) : 
-        _value(parser(values, text)), _color(parser(colors, text, full_match)) {}
+        value(parser(values, text)), color(parser(colors, text, full_match)) {}
     Card(std::string_view &&text, bool full_match = false) : 
         Card(text, full_match) {}
 
-    id_t get_value() const { return _value; }
-    id_t get_color() const { return _color; }
+    id_t get_value() const { return value; }
+    id_t get_color() const { return color; }
 
     operator std::string() const {
-        return values[_value] + colors[_color];
+        return values[value] + colors[color];
     }
 
     inline static bool valid(std::string_view text, bool full_match = false) {
@@ -166,13 +162,13 @@ class Card {
 
 class Deck {
   private:
-    std::vector<Card> _deck;
+    std::vector<Card> deck;
 
   public:
 
-    Deck(std::vector<Card> deck) : _deck(deck) {}
+    Deck(std::vector<Card> deck_) : deck(deck_) {}
     Deck(std::string_view &text, bool full_match = false) : 
-        _deck(parse_list<Card>(text, full_match)) {}
+        deck(parse_list<Card>(text, full_match)) {}
     Deck(std::string_view &&text, bool full_match = false) : 
         Deck(text, full_match) {}
 
@@ -180,48 +176,48 @@ class Deck {
         if (full) {
             for (id_t value = 0; value < Card::values.size(); value++) {
                 for (id_t color = 0; color < Card::colors.size(); color++) {
-                    _deck.push_back(Card(value, color));
+                    deck.push_back(Card(value, color));
                 }
             }
 
-            std::ranges::shuffle(_deck, gen);
+            std::ranges::shuffle(deck, gen);
         }
     }
 
     bool has_color(Card::id_t color) const {
-        return std::ranges::any_of(_deck, [color](auto c) { 
+        return std::ranges::any_of(deck, [color](auto c) { 
                 return c.get_color() == color; 
             });
     }
 
     bool has(Card card) const {
-        auto it = std::ranges::find(_deck, card);
-        if (it == std::end(_deck)) {
+        auto it = std::ranges::find(deck, card);
+        if (it == std::end(deck)) {
             return false;
         }
         return true;
     }
 
     bool get(Card card) {
-        auto it = std::ranges::find(_deck, card);
-        if (it == std::end(_deck)) {
+        auto it = std::ranges::find(deck, card);
+        if (it == std::end(deck)) {
             return false;
         }
-        _deck.erase(it);
+        deck.erase(it);
         return true;
     }
 
     bool add(Card card) {
-        if (std::ranges::find(_deck, card) != std::end(_deck)) {
+        if (std::ranges::find(deck, card) != std::end(deck)) {
             return false;
         }
 
-        _deck.push_back(card);
+        deck.push_back(card);
         return true;
     }
 
-    size_t size() { return _deck.size(); }
-    std::vector<Card> list() const { return _deck; }
+    std::size_t size() { return deck.size(); }
+    std::vector<Card> list() const { return deck; }
 };
 
 class Place {
@@ -235,25 +231,25 @@ class Place {
     using id_t = std::size_t;
 
   private:
-    id_t _place;
+    id_t place;
     
   public:
-    Place(id_t place) : _place(place) {}
+    Place(id_t place_) : place(place_) {}
     Place(std::string_view &text, bool full_match = false) : 
-        _place(parser(places, text, full_match)) {}
+        place(parser(places, text, full_match)) {}
     Place(std::string_view &&text, bool full_match = false) : 
         Place(text, full_match) {}
 
     id_t get_place() const {
-        return _place;
+        return place;
     }
 
     operator std::string() const {
-        return places[_place];
+        return places[place];
     }
 
     operator id_t() const {
-        return _place;
+        return place;
     }
 
     inline static bool valid(std::string_view text, bool full_match = false) {
