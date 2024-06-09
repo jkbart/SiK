@@ -94,7 +94,6 @@ class Messenger {
     std::string peer_name;
     std::string delim;
     bool is_closed = false;
-    short int last_flags = 0; // for unset/reset_flags
 
   public:
     Messenger(int desc_, Poller &poller_, std::string my_name_, 
@@ -110,7 +109,7 @@ class Messenger {
     int get_fd();
     bool closed();
     void unset_flags(short  mask);
-    void reset_flags();
+    virtual void reset_flags();
 
     virtual ~Messenger();
 };
@@ -134,6 +133,7 @@ class MessengerIN : virtual public Messenger {
     std::vector<std::string> get_msgs();
 
     std::vector<std::string> runIN();
+    virtual void reset_flags();
     
     virtual ~MessengerIN();
 };
@@ -157,6 +157,7 @@ class MessengerOUT : virtual public Messenger {
     int send_size();
 
     void runOUT();
+    virtual void reset_flags();
 
     virtual ~MessengerOUT() = default;
 };
@@ -168,6 +169,7 @@ class MessengerBI : public MessengerIN, public MessengerOUT {
         std::string delim_ = "\r\n");
 
     std::vector<std::string> run();
+    virtual void reset_flags();
 };
 
 class Reporter : public MessengerOUT {
@@ -310,12 +312,10 @@ inline int Messenger::get_fd() { return desc; }
 inline bool Messenger::closed() {return is_closed; }
 
 inline void Messenger::unset_flags(short int mask) {
-    last_flags = poller.get(poll_idx).events;
     poller.get(poll_idx).events &= (~mask);
 }
-
 inline void Messenger::reset_flags() {
-    poller.get(poll_idx).events = last_flags;
+    poller.get(poll_idx).events = 0;
 }
 
 inline Messenger::~Messenger() {
@@ -330,7 +330,6 @@ inline MessengerIN::MessengerIN(int desc_, Poller &poller_, std::string my_name_
     Messenger(desc_, poller_, my_name_, peer_name_, logger_, delim_), 
     buffor(buffor_size) {
     poller.get(poll_idx).events |= POLLIN;
-    last_flags |= POLLIN;
 }
 
 inline void MessengerIN::read() {
@@ -394,6 +393,10 @@ inline std::vector<std::string> MessengerIN::runIN() {
     }
 
     return {};
+}
+
+inline void MessengerIN::reset_flags() {
+    poller.get(poll_idx).events |= POLLIN;
 }
 
 inline MessengerIN::~MessengerIN() {
@@ -467,6 +470,11 @@ inline void MessengerOUT::runOUT() {
     if (revents() & POLLOUT) write(); 
 }
 
+inline void MessengerOUT::reset_flags() {
+    if (!buffor_to_send.empty())
+        poller.get(poll_idx).events |= POLLOUT;
+}
+
 inline MessengerBI::MessengerBI(int desc_, Poller &poller_, std::string my_name_, 
         std::string peer_name_, std::shared_ptr<Reporter> logger_,
         std::string delim_) : 
@@ -482,6 +490,11 @@ inline std::vector<std::string> MessengerBI::run() {
 
     runOUT();
     return runIN();
+}
+
+inline void MessengerBI::reset_flags() {
+    MessengerIN::reset_flags();
+    MessengerOUT::reset_flags();
 }
 
 inline Reporter::Reporter(int desc_, Poller &poller_) : 

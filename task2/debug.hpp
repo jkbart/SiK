@@ -43,12 +43,8 @@ struct LogStream {
 
     template<class T>
     friend Annotated operator<<(Annotated a, T msg) {
-        if constexpr (!debug) {
-            return a;
-        } else {
-            std::clog << msg;
-            return a;
-        }
+        std::clog << msg;
+        return a;
     }
 };
 

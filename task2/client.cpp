@@ -16,7 +16,7 @@
 #include "debug.hpp"
 using namespace DEBUG_NS;
 
-// Picks card for trick from deck.
+// Picks randomly card for trick from deck.
 Card autopicker(const Deck &deck, std::vector<Card> cards) {
     std::vector<Card> sample;
 
@@ -31,7 +31,7 @@ Card autopicker(const Deck &deck, std::vector<Card> cards) {
     }
 
     if (sample.empty()) {
-        throw std::runtime_error("Tried to pick card from empty deck");
+        throw game_error("Tried to pick card from empty deck");
     } else {
         return sample[gen() % sample.size()];
     }
@@ -53,37 +53,37 @@ int main(int argc, char* argv[]) {
     bool is_automatic = false;
 
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "-h")) {
+        if (!std::strcmp(argv[i], "-h")) {
             check_args |= 1;
             i++;
             if (i == argc) {
                 throw std::invalid_argument("No host ip value");
             }
             host = argv[i];
-        } else if (!strcmp(argv[i], "-p")) {
+        } else if (!std::strcmp(argv[i], "-p")) {
             check_args |= 1<<1;
             i++;
             if (i == argc) {
                 throw std::invalid_argument("No host port value");
             }
             port = NET::read_port(argv[i]);
-        } else if (!strcmp(argv[i], "-4")) {
+        } else if (!std::strcmp(argv[i], "-4")) {
             domain = AF_INET;
-        } else if (!strcmp(argv[i], "-6")) {
+        } else if (!std::strcmp(argv[i], "-6")) {
             domain = AF_INET6;
-        } else if (!strcmp(argv[i], "-N")) {
+        } else if (!std::strcmp(argv[i], "-N")) {
             check_args |= 1<<2;
             place_s = "N";
-        } else if (!strcmp(argv[i], "-W")) {
+        } else if (!std::strcmp(argv[i], "-W")) {
             check_args |= 1<<2;
             place_s = "W";
-        } else if (!strcmp(argv[i], "-S")) {
+        } else if (!std::strcmp(argv[i], "-S")) {
             check_args |= 1<<2;
             place_s = "S";
-        } else if (!strcmp(argv[i], "-E")) {
+        } else if (!std::strcmp(argv[i], "-E")) {
             check_args |= 1<<2;
             place_s = "E";
-        } else if (!strcmp(argv[i], "-a")) {
+        } else if (!std::strcmp(argv[i], "-a")) {
             is_automatic = true;
         } else {
             throw std::invalid_argument("Unknown argument " + 
@@ -104,8 +104,7 @@ int main(int argc, char* argv[]) {
     bool can_end_now = false; // At least one deal has to be played.
     Place my_place(place_s);
     Deck my_deck;
-    std::vector<TAKEN> all_takes;
-    // bool waits_for_trick = false;
+    std::vector<TAKEN> all_takes; // From current deal.
 
     Poller poller;
     std::shared_ptr<Reporter> logger;
@@ -123,12 +122,12 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<MessengerOUT> handlerOUT(new MessengerOUT(
                     dup_fd(STDOUT_FILENO), poller, "", "", nullptr, "\n"));
 
-    bool finish_this_deal_auto = false; // debugging variable.
+    bool finish_this_deal_auto = false; // Debugging variable.
     while (poller.size()) {
         int ret = poller.run();
         if (ret < 0) {
             debuglog << "poll returned < 0" << "\n";
-            return 1;
+            throw syscall_error("poll", ret);
         }
 
         if (logger) { // Defined if player is automatic.
@@ -143,7 +142,6 @@ int main(int argc, char* argv[]) {
                 try {
                 std::string ui_text;
 
-                // Start of handling diffrent messeges.
                 if (matches<BUSY>(msg)) {
                     debuglog << "matched to BUSY" << "\n";
                     is_closing = true;
@@ -193,12 +191,11 @@ int main(int argc, char* argv[]) {
                     debuglog << "matched to TOTAL" << "\n";
                     ui_text = TOTAL(msg).getUI();
                     can_end_now = true;
-                    // finish_this_deal_auto = false;
+                    finish_this_deal_auto = false;
                 } else  {
                     // Ignore wrong messeges.
                     continue;
                 }
-                // End of handling diffrent messeges.
 
                 if (!is_automatic) {
                     debuglog << "printing UI\n";
@@ -218,8 +215,9 @@ int main(int argc, char* argv[]) {
 
         if (handlerOUT) {
             handlerOUT->runOUT();
-            if (!server && !handlerOUT->send_size())
+            if (!server && !handlerOUT->send_size()) {
                 handlerOUT.reset();
+            }
         }
 
 
@@ -234,7 +232,7 @@ int main(int argc, char* argv[]) {
         if (handlerIN) {
             for (auto input : handlerIN->runIN()) {
                 if (is_automatic) {
-                    throw std::runtime_error(
+                    throw game_error(
                         "Automatic player received input on STDIN");
                 }
 
@@ -261,7 +259,7 @@ int main(int argc, char* argv[]) {
                             debuglog << "Server already closed!!!\n";
                         }
                     } catch (std::exception &e) {
-                        debuglog << e.what() << "\n";
+                        debuglog << "Error parsing card: " << e.what() << "\n";
                     }
                 } else {
                     if constexpr (debug) { // Debug commands
@@ -279,7 +277,8 @@ int main(int argc, char* argv[]) {
     if (can_end_now) {
         return 0;
     } else {
-        std::cerr << "Did not run to an end. (for more info compile with -DDEBUG)\n";
+        std::cerr << "Did not run to an end. "
+                  << "(for more info compile with -DDEBUG)\n";
         return 1;
     }
     } catch (std::exception &e) {

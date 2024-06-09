@@ -41,7 +41,7 @@ uint16_t read_port(char const *string) {
 std::string getname(int socket, 
                     std::function<int(int, sockaddr*, socklen_t*)> f) {
     sockaddr_storage st;
-    socklen_t len;
+    socklen_t len = sizeof(sockaddr_storage);
 
     int sys_call_ret = f(socket, (sockaddr*) &st, &len);
     if (sys_call_ret != 0) {
@@ -88,6 +88,7 @@ int connect(char *host, uint16_t port, int domain) {
     int errcode = getaddrinfo(host, NULL, &hints, &address_result);
 
     if (errcode != 0) {
+        freeaddrinfo(address_result);
         throw syscall_error(std::string("getaddrinfo(") + 
                             std::string(gai_strerror(errcode)) + 
                             std::string(")"), errcode);
@@ -104,7 +105,7 @@ int connect(char *host, uint16_t port, int domain) {
 
     if (address_result->ai_family == AF_INET6) {
         debuglog << "Connecting using ipv6\n";
-        struct sockaddr_in6 server_address;
+        struct sockaddr_in6 server_address{};
         server_address.sin6_family = AF_INET6;  // IPv6
         server_address.sin6_addr =
                 ((struct sockaddr_in6 *) (address_result->ai_addr))->sin6_addr;
@@ -118,7 +119,7 @@ int connect(char *host, uint16_t port, int domain) {
         }
     } else if (address_result->ai_family == AF_INET) {
         debuglog << "Connecting using ipv4\n";
-        struct sockaddr_in server_address;
+        struct sockaddr_in server_address{};
         server_address.sin_family = AF_INET;  // IPv4
         server_address.sin_addr =
                 ((struct sockaddr_in *) (address_result->ai_addr))->sin_addr;
@@ -136,6 +137,7 @@ int connect(char *host, uint16_t port, int domain) {
         throw syscall_error("getaddrinfo", errcode);
     }
 
+    freeaddrinfo(address_result);
     return sfd;
 }
 
@@ -143,8 +145,10 @@ int connect(char *host, uint16_t port, int domain) {
 class Socket {
   private:
     std::shared_ptr<int> _socket_fd{new int(-1), [](int *x) {
-                                        if (*x == -1)
+                                        if (*x == -1) {
+                                            delete x;
                                             return;
+                                        }
 
                                         ::close(*x);
                                         delete x;

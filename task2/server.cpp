@@ -98,14 +98,13 @@ int main(int argc, char* argv[]) {
 
     if (check_args != 1) {
         throw std::invalid_argument(
-            "Not all args were specified, required: -p <port> -f <game_file>");
+            "Not all args were specified, required: -p <port> -f <game_file> -t <timeout>");
     }
 
     // Checking correctness of file.
     GameRun game(file_s);
     if (!game.has_next()) {
-        debuglog << "File has no deals!" << "\n";
-        return 1;
+        throw game_error("File has no deals!");
     }
 
     // Converting timeout from s to ms.
@@ -123,7 +122,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Seting up listening socket.
-    struct sockaddr_in6 server_address;
+    struct sockaddr_in6 server_address{};
     server_address.sin6_family = AF_INET6;  // IPv6
     server_address.sin6_addr = in6addr_any; // Listening on all interfaces.
     server_address.sin6_port = htons(port);
@@ -153,8 +152,8 @@ int main(int argc, char* argv[]) {
 
     int8_t active_player_cnt = 0;
     std::vector<msnger_ptr> players(PLAYER_CNT);
-    std::set<msnger_ptr> closer; // Just sending data and closing after.
-    std::set<msnger_ptr> waiting_for_place; // Connections waiting for IAM
+    std::set<msnger_ptr> closer; // Just sends data and closes after.
+    std::set<msnger_ptr> waiting_for_place; // Connections waiting for IAM.
 
     Deal deal = game.get_next();
     std::vector<uint> total_score(PLAYER_CNT, 0);
@@ -166,11 +165,12 @@ int main(int argc, char* argv[]) {
         int ret = poller.run();
         if (ret < 0) {
             debuglog << "poll returned < 0" << "\n";
-            return 1;
+            throw syscall_error("poll", ret);
         }
         debuglog << "GROUP 0: running poll\n";
         logger->runOUT();
 
+        // If only logger is left and it has nothing to log, close it.
         if (poller.size() == 1 && logger->send_size() == 0) {
             logger.reset();
             break;
@@ -188,7 +188,7 @@ int main(int argc, char* argv[]) {
 
                 if (active_player_cnt == PLAYER_CNT) {
                     debuglog << "New client, moving to closer. fd="
-                              << fd << "\n";
+                             << fd << "\n";
                     msnger_ptr messenger(new MessengerBI(fd, poller,
                         NET::getsockname(fd), NET::getpeername(fd), logger));
                     messenger->send_msg(BUSY().get_msg());
@@ -201,11 +201,13 @@ int main(int argc, char* argv[]) {
                     messenger->set_timeout(timeout);
                     waiting_for_place.insert(std::move(messenger));
                 }
+            } else {
+                throw syscall_error("accept", fd);
             }
         }
 
         debuglog << "closer_size: " << closer.size()
-                << " wfp_size: " << waiting_for_place.size() << "\n";
+                 << " wfp_size: " << waiting_for_place.size() << "\n";
 
         // GROUP 2
         // Handle closer.
@@ -247,6 +249,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // Function to close player.
         auto close_player = [&](int i) {
             players[i].reset();
             active_player_cnt--;
@@ -258,17 +261,16 @@ int main(int argc, char* argv[]) {
         // GROUP 3
         // Handle current players
         debuglog << "GROUP 3: handling current players\n";
+        if (active_player_cnt == PLAYER_CNT) {
         for (uint i = 0; i < PLAYER_CNT; i++) {
             if (players[i] == nullptr) continue;
-            if (active_player_cnt != PLAYER_CNT) continue;
+            debuglog << "Player " << (std::string)Place(i) << "\n";
             debuglog << "timeout left: " << players[i]->get_timeout() << "\n";
 
             try {
             for (auto msg : players[i]->run()) {
                 if (!matches<TRICK>(msg)) {
                     debuglog << "Player got not TRICK msg, closing" << "\n";
-                    // players[i].reset();
-                    // active_player_cnt--;
                     close_player(i);
                     break;
                 }
@@ -276,8 +278,6 @@ int main(int argc, char* argv[]) {
                 TRICK trick(msg);
                 if (trick.cards.size() != 1) {
                     debuglog << "Player got trick with not one card, closing\n";
-                    // players[i].reset();
-                    // active_player_cnt--;
                     close_player(i);
                     break;
                 } else if (active_player_cnt != PLAYER_CNT ||
@@ -285,7 +285,7 @@ int main(int argc, char* argv[]) {
                     if (active_player_cnt != PLAYER_CNT) {
                         debuglog << "Not all players are connected, WRONG\n";
                     } else {
-                        debuglog << "Player cannot put this card not, WRONG\n";
+                        debuglog << "Player cannot put this card, WRONG\n";
                     }
                     players[i]->
                         send_msg(WRONG(deal.get_lew_cnt()).get_msg());
@@ -298,7 +298,7 @@ int main(int argc, char* argv[]) {
                         TAKEN taken(deal.get_lew_cnt(), deal.get_table(), 
                                     Place(deal.get_loser()));
                         for (uint j = 0; j < PLAYER_CNT; j++) {
-                            if (players[j].get() != nullptr)
+                            if (players[j])
                                 players[j]->send_msg(taken.get_msg());
                         }
 
@@ -311,31 +311,33 @@ int main(int argc, char* argv[]) {
 
                             std::vector<std::string> score_msgs = 
                                 {SCORE(score).get_msg(), 
-                                TOTAL(total_score).get_msg()};
+                                 TOTAL(total_score).get_msg()};
 
                             for (uint j = 0; j < PLAYER_CNT; j++) {
-                                if (players[j].get() == nullptr) continue;
-                                players[j]->send_msgs(score_msgs);
-                                players[j]->reset_timeout();
+                                if (players[j]) {
+                                    players[j]->send_msgs(score_msgs);
+                                    players[j]->reset_timeout();
+                                }
                             }
 
                             if (game.has_next()) {
                                 debuglog << "Creating new deal" << "\n";
                                 deal = game.get_next();
                                 for (uint j = 0; j < PLAYER_CNT; j++) {
-                                    if (players[j].get() == nullptr) continue;
-                                    players[j]->send_msgs(
-                                        get_player_deal_history(deal, j));
+                                    if (players[j])
+                                        players[j]->send_msgs(
+                                            get_player_deal_history(deal, j));
                                 }
                             } else {
                                 debuglog << "Ending game, no new deals" << "\n";
                                 for (uint j = 0; j < PLAYER_CNT; j++) {
-                                    if (players[j].get() == nullptr) continue;
-                                    closer.insert(std::move(players[j]));
+                                    if (players[j]) {
+                                        closer.insert(std::move(players[j]));
+                                        active_player_cnt--;
+                                    }
                                 }
 
                                 // Stopping accepting new connections.
-                                active_player_cnt = PLAYER_CNT;
                                 accepting = false;
                                 poller.rm(idx_accept);
                                 queue_socket.close();
@@ -344,9 +346,10 @@ int main(int argc, char* argv[]) {
                         }
                     }
 
-                    // Sending new trick
-                    debuglog << "sending next, next player: " 
-                             << deal.get_next_player() << "\n";
+                    // Sending new trick.
+                    debuglog << "Sending next trick, next player: " 
+                             << (std::string)Place(deal.get_next_player()) 
+                             << "\n";
                     if (players[deal.get_next_player()] != nullptr) {
                         debuglog << "Sending new trick: " 
                                  << next_trick(deal) << "\n";
@@ -384,6 +387,7 @@ int main(int argc, char* argv[]) {
                 continue;
             }
         }
+        }
 
         // GROUP 4
         // Handle clients waiting for place assignment (IAM msg).
@@ -401,7 +405,7 @@ int main(int argc, char* argv[]) {
             // Check if got IAM, anserw WRONG to trick and close on wrong msg
             for (auto e : (*it)->run()) {
                 if (matches<TRICK>(e)) {
-                    // Depends on intrpretation. Leaving for now.
+                    // Depends on interpretation. Leaving for now.
                     // (*it)->send_msg(
                     //     WRONG(deal.get_lew_cnt())
                     //         .get_msg());
@@ -444,7 +448,7 @@ int main(int argc, char* argv[]) {
             if (got_iam) {
                 if (players[place]) {
                     debuglog << "WFP got IAM for taken place,"
-                             << "moving to Closer" << "\n";
+                             << "moving to closer" << "\n";
                     std::vector<Place> busy_list;
                     for (int i = 0; i < PLAYER_CNT; i++)
                         if (players[i])
@@ -453,24 +457,27 @@ int main(int argc, char* argv[]) {
                     (*it)->reset_timeout();
                     closer.insert(std::move(
                         waiting_for_place.extract(it).value()));
+                } else if (!accepting) {
+                    debuglog << "WFP got IAM for free place but game ended "
+                             << "in meantime, moving to closer" << "\n";
+                    (*it)->send_msg(BUSY().get_msg());
+                    (*it)->reset_timeout();
+                    closer.insert(std::move(
+                        waiting_for_place.extract(it).value()));
                 } else {
                     debuglog << "WFP got IAM for free place, "
-                             << "assiging as new player " 
-                             << (std::string) Place(place) << "\n";
+                             << "assiging as new player on " 
+                             << (std::string)Place(place) << "\n";
                     players[place] = std::move(
                         waiting_for_place.extract(it).value());
-                    debuglog << "Succefully moved to players ffrom wfp\n";
                     players[place]->send_msgs(
                         get_player_deal_history(deal, place));
-                    debuglog << "Succefully sended msgs\n";
                     active_player_cnt++;
                     players[place]->reset_timeout();
                     players[place]->unset_flags(POLLIN | POLLOUT);
 
-                    // Sending trick messege to next player.
-                    if (active_player_cnt == PLAYER_CNT 
-                        // && !deal.is_done() // Is this && necesary? TODO
-                        ) {
+                    // Sending trick messege to next player and resuming game.
+                    if (active_player_cnt == PLAYER_CNT) {
                         for (auto &e : players) {
                             if (e) e->reset_flags();
                         }
@@ -485,16 +492,9 @@ int main(int argc, char* argv[]) {
                 continue;
             }
         }
-
-        if (poller.size() == 1 && logger->send_size() == 0) {
-            logger.reset();
-        }
     }
     } catch (std::exception &e) {
         std::cerr << "[ERROR] " << e.what() << "\n";
         return 1;
     } 
-
-
 }
-
